@@ -5,6 +5,7 @@ import dotenv
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+
 # ==========================
 # LOAD .ENV FILE
 # ==========================
@@ -14,7 +15,8 @@ dotenv_file = BASE_DIR / '.env'
 if dotenv_file.exists():
     dotenv.load_dotenv(dotenv_file)
 
-# Gemini API Key .env se load hogi
+
+# Gemini API Key
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 
@@ -44,6 +46,7 @@ INSTALLED_APPS = [
     # Third Party
     'rest_framework',
     'corsheaders',
+    'drf_spectacular',
 
     # Local App
     'api',
@@ -119,7 +122,6 @@ WSGI_APPLICATION = 'config.wsgi.application'
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.sqlite3',
-
         'NAME': BASE_DIR / 'db.sqlite3',
     }
 }
@@ -132,22 +134,22 @@ DATABASES = {
 AUTH_PASSWORD_VALIDATORS = [
     {
         'NAME':
-        'django.contrib.auth.password_validation.UserAttributeSimilarityValidator',
+            'django.contrib.auth.password_validation.UserAttributeSimilarityValidator',
     },
 
     {
         'NAME':
-        'django.contrib.auth.password_validation.MinimumLengthValidator',
+            'django.contrib.auth.password_validation.MinimumLengthValidator',
     },
 
     {
         'NAME':
-        'django.contrib.auth.password_validation.CommonPasswordValidator',
+            'django.contrib.auth.password_validation.CommonPasswordValidator',
     },
 
     {
         'NAME':
-        'django.contrib.auth.password_validation.NumericPasswordValidator',
+            'django.contrib.auth.password_validation.NumericPasswordValidator',
     },
 ]
 
@@ -198,4 +200,20 @@ REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": (
         "rest_framework_simplejwt.authentication.JWTAuthentication",
     ),
+
+    # Swagger / OpenAPI
+    "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
+}
+
+
+# ==========================
+# SWAGGER / OPENAPI
+# ==========================
+
+SPECTACULAR_SETTINGS = {
+    "TITLE": "Nexus Technologies API",
+    "DESCRIPTION": "REST API documentation for Nexus Technologies DevSecOps platform.",
+    "VERSION": "1.0.0",
+
+    "SERVE_INCLUDE_SCHEMA": False,
 }
