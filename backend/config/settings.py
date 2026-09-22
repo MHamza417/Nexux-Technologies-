@@ -217,3 +217,66 @@ SPECTACULAR_SETTINGS = {
 
     "SERVE_INCLUDE_SCHEMA": False,
 }
+
+
+
+# ==========================
+# STRUCTURED AUDIT & SCAN LOGGING (FOR GRAFANA INTEGRATION)
+# ==========================
+
+LOGS_DIR = BASE_DIR / 'logs'
+LOGS_DIR.mkdir(parents=True, exist_ok=True)
+
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'verbose': {
+            'format': '[%(asctime)s] %(levelname)s [%(name)s:%(lineno)s] %(message)s',
+            'datefmt': '%Y-%m-%d %H:%M:%S',
+        },
+        'raw_json': {
+            'format': '%(message)s',
+        },
+    },
+    'handlers': {
+        'console': {
+            'level': 'INFO',
+            'class': 'logging.StreamHandler',
+            'formatter': 'verbose',
+        },
+        'scan_json_file': {
+            'level': 'INFO',
+            'class': 'logging.handlers.RotatingFileHandler',
+            'filename': str(LOGS_DIR / 'scan_metrics.json.log'),
+            'maxBytes': 10 * 1024 * 1024,
+            'backupCount': 5,
+            'formatter': 'raw_json',
+        },
+        'audit_json_file': {
+            'level': 'INFO',
+            'class': 'logging.handlers.RotatingFileHandler',
+            'filename': str(LOGS_DIR / 'security_audit.json.log'),
+            'maxBytes': 10 * 1024 * 1024,
+            'backupCount': 5,
+            'formatter': 'raw_json',
+        },
+    },
+    'loggers': {
+        'django': {
+            'handlers': ['console'],
+            'level': 'INFO',
+            'propagate': True,
+        },
+        'security.scans': {
+            'handlers': ['console', 'scan_json_file'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+        'security.audit': {
+            'handlers': ['console', 'audit_json_file'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+    },
+}

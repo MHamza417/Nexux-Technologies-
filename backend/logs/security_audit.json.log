@@ -1,0 +1,2 @@
+{"timestamp": "2026-09-22T13:35:30.945581+00:00", "event_type": "security_audit_query", "query_param": "security", "table": "api_service", "mode": "raw", "result_count": 0, "execution_time_ms": 408.69, "client_ip": "127.0.0.1", "status": "AUDITED"}
+{"timestamp": "2026-09-22T13:35:30.996799+00:00", "event_type": "security_audit_query", "query_param": "1", "table": "api_vulnerabilityreport", "mode": "raw_sql", "result_count": 0, "execution_time_ms": 1.12, "client_ip": "127.0.0.1", "status": "AUDITED"}
