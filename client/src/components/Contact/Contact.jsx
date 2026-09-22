@@ -1,176 +1,264 @@
-import "./Contact.css";
 import { useState } from "react";
-import { sendContactMessage } from "../../api/contactApi"; // API call import ki
+import "./Contact.css";
+import { sendContactMessage } from "../../api/contactApi";
 import {
   FaPhoneAlt,
   FaEnvelope,
   FaMapMarkerAlt,
-  FaFacebookF,
   FaLinkedinIn,
   FaGithub,
+  FaLock,
+  FaShieldAlt,
+  FaKey,
+  FaPaperPlane,
 } from "react-icons/fa";
 
 function Contact() {
-  const [formData, setFormData] = useState({ name: "", email: "", subject: "", message: "" });
+  const [formData, setFormData] = useState({
+    name: "",
+    email: "",
+    subject: "",
+    message: "",
+  });
   const [statusMsg, setStatusMsg] = useState("");
   const [isSuccess, setIsSuccess] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
 
   const handleChange = (e) => {
     setFormData({ ...formData, [e.target.name]: e.target.value });
   };
 
-  // Direct Gmail Web Link open karne ka function (100% Working on all devices)
   const handleEmailClick = () => {
-    const email = "hamza.dev.pk@gmail.com";
-    const subject = encodeURIComponent("Inquiry from Nexus Technologies");
-    const body = encodeURIComponent("Hi Hamza,\n\n");
-    
-    // Yeh URL direct web-based Gmail composer open karega naye tab mein
+    const email = "hamzadevelopers35@gmail.com";
+    const subject = encodeURIComponent("Security Audit Inquiry - Nexus Technologies");
+    const body = encodeURIComponent(
+      "Hi Security Team,\n\nWe would like to request an automated security baseline & pipeline audit for our infrastructure.\n\n"
+    );
     const gmailUrl = `https://mail.google.com/mail/?view=cm&fs=1&to=${email}&su=${subject}&body=${body}`;
-    
-    window.open(gmailUrl, "_blank"); // Naya tab khulega
+    window.open(gmailUrl, "_blank");
   };
 
-  // Direct Phone click action
   const handlePhoneClick = () => {
-    window.location.href = "tel:+923001234567";
+    window.location.href = "tel:+923191073635";
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    setStatusMsg("Sending...");
+    setSubmitting(true);
+    setStatusMsg("Transmitting encrypted request...");
     setIsSuccess(false);
 
     const backendData = {
       name: formData.name,
       email: formData.email,
-      message: `Subject: ${formData.subject}\n\nMessage:\n${formData.message}`
+      message: `[SECURITY AUDIT REQUEST]\nSubject: ${formData.subject}\n\nDetails:\n${formData.message}`,
     };
-    
-    const result = await sendContactMessage(backendData);
-    
-    if (result && (result.status === "success" || result.message === "Message saved successfully!")) {
-      setIsSuccess(true);
-      setStatusMsg("Message Sent Successfully! 👍");
-      setFormData({ name: "", email: "", subject: "", message: "" }); 
-    } else {
+
+    try {
+      const result = await sendContactMessage(backendData);
+      if (
+        result &&
+        (result.status === "success" || result.message === "Message saved successfully!")
+      ) {
+        setIsSuccess(true);
+        setStatusMsg("Inquiry Received! Our SOC team will respond within 2 hours. 🛡️");
+        setFormData({ name: "", email: "", subject: "", message: "" });
+      } else {
+        setIsSuccess(false);
+        setStatusMsg(result?.message || "Transmission failed. Please check network.");
+      }
+    } catch {
       setIsSuccess(false);
-      setStatusMsg(result?.message || "Something went wrong. Please try again.");
+      setStatusMsg("Connection error. Ensure backend service is reachable.");
+    } finally {
+      setSubmitting(false);
     }
   };
 
   return (
-    <section className="contact" id="contact">
-
-      <div className="contact-title">
-        <span>CONTACT US</span>
-        <h2>Let's Build Something Amazing</h2>
-        <p>Have a project in mind? Contact our team today.</p>
-      </div>
-
-      <div className="contact-container">
-
-        {/* Left Side (Dynamic Interaction) */}
-        <div className="contact-info">
-
-          {/* Phone Box */}
-          <div className="info-box" onClick={handlePhoneClick} style={{ cursor: "pointer" }}>
-            <FaPhoneAlt className="icon" />
-            <div>
-              <h3>Phone</h3>
-              <p>+92 3191073635</p>
-            </div>
+    <section className="cyber-contact" id="contact">
+      <div className="contact-wrapper">
+        <div className="contact-header">
+          <div className="badge-pill">
+            <span className="pulsing-radar"></span>
+            INCIDENT RESPONSE & AUDIT REQUESTS
           </div>
-
-          {/* Email Box (Direct Gmail Web Opener) */}
-          <div className="info-box" onClick={handleEmailClick} style={{ cursor: "pointer" }}>
-            <FaEnvelope className="icon" />
-            <div>
-              <h3>Email</h3>
-              <p>hamzadevelopers35@gmail.com</p>
-            </div>
-          </div>
-
-          <div className="info-box">
-            <FaMapMarkerAlt className="icon" />
-            <div>
-              <h3>Address</h3>
-              <p>Lahore, Pakistan</p>
-            </div>
-          </div>
-
-          <div className="social-icons">
-            <FaFacebookF />
-            <FaLinkedinIn />
-            <FaGithub />
-          </div>
-
+          <h2>
+            Initiate Security <span>Audit Engagement</span>
+          </h2>
+          <p>
+            Connect directly with our DevSecOps engineers for automated pipeline integration,
+            DAST/SAST audits, or urgent vulnerability assessment.
+          </p>
         </div>
 
-        {/* Right Side (Form) */}
-        <div className="contact-form">
+        <div className="contact-grid">
+          {/* Left Info Column */}
+          <div className="contact-info-panel">
+            <div className="security-notice-card">
+              <div className="notice-icon">
+                <FaLock />
+              </div>
+              <div className="notice-text">
+                <h4>Encrypted Communications</h4>
+                <p>
+                  All audit data and inquiries are handled under strict confidentiality protocols.
+                </p>
+              </div>
+            </div>
 
-          <form onSubmit={handleSubmit}>
+            <div className="info-cards-stack">
+              {/* Phone */}
+              <div className="contact-info-card" onClick={handlePhoneClick}>
+                <div className="info-icon phone">
+                  <FaPhoneAlt />
+                </div>
+                <div className="info-body">
+                  <span className="info-label">SOC Hotline (24/7)</span>
+                  <strong className="info-val">+92 3191073635</strong>
+                </div>
+              </div>
 
-            <input
-              type="text"
-              name="name"
-              placeholder="Your Name"
-              value={formData.name}
-              onChange={handleChange}
-              required
-            />
+              {/* Email */}
+              <div className="contact-info-card" onClick={handleEmailClick}>
+                <div className="info-icon email">
+                  <FaEnvelope />
+                </div>
+                <div className="info-body">
+                  <span className="info-label">Security Operations Email</span>
+                  <strong className="info-val">hamzadevelopers35@gmail.com</strong>
+                </div>
+              </div>
 
-            <input
-              type="email"
-              name="email"
-              placeholder="Your Email"
-              value={formData.email}
-              onChange={handleChange}
-              required
-            />
+              {/* Location */}
+              <div className="contact-info-card">
+                <div className="info-icon location">
+                  <FaMapMarkerAlt />
+                </div>
+                <div className="info-body">
+                  <span className="info-label">SOC Command Headquarters</span>
+                  <strong className="info-val">Lahore, Pakistan</strong>
+                </div>
+              </div>
 
-            <input
-              type="text"
-              name="subject"
-              placeholder="Subject"
-              value={formData.subject}
-              onChange={handleChange}
-              required
-            />
+              {/* PGP Fingerprint */}
+              <div className="contact-info-card pgp-card">
+                <div className="info-icon key">
+                  <FaKey />
+                </div>
+                <div className="info-body">
+                  <span className="info-label">PGP Fingerprint</span>
+                  <code className="pgp-code">4A8F-912C-DEVSECOPS-NEXUS-2026</code>
+                </div>
+              </div>
+            </div>
 
-            <textarea
-              name="message"
-              rows="6"
-              placeholder="Write your message..."
-              value={formData.message}
-              onChange={handleChange}
-              required
-            ></textarea>
+            {/* Socials */}
+            <div className="contact-socials">
+              <span>Verified Channels:</span>
+              <div className="social-links">
+                <a
+                  href="https://github.com/MHamza417"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="social-btn"
+                  aria-label="GitHub"
+                >
+                  <FaGithub />
+                </a>
+                <a
+                  href="https://www.linkedin.com"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="social-btn"
+                  aria-label="LinkedIn"
+                >
+                  <FaLinkedinIn />
+                </a>
+              </div>
+            </div>
+          </div>
 
-            <button type="submit">
-              Send Message
-            </button>
+          {/* Right Form Column */}
+          <div className="contact-form-panel">
+            <div className="form-header-bar">
+              <span className="form-title">
+                <FaShieldAlt className="text-cyan" /> Secure Dispatch Form
+              </span>
+              <span className="form-enc-tag">AES-256 TLS 1.3</span>
+            </div>
 
-          </form>
+            <form onSubmit={handleSubmit} className="cyber-form">
+              <div className="form-group">
+                <label>Target Organization / Contact Name</label>
+                <input
+                  type="text"
+                  name="name"
+                  placeholder="e.g. Alex Miller"
+                  value={formData.name}
+                  onChange={handleChange}
+                  required
+                />
+              </div>
 
-          {statusMsg && (
-            <p 
-              className="status-message" 
-              style={{ 
-                marginTop: "15px", 
-                fontWeight: "bold", 
-                color: isSuccess ? "#4caf50" : "#f44336"
-              }}
-            >
-              {statusMsg}
-            </p>
-          )}
+              <div className="form-group">
+                <label>Verified Work Email</label>
+                <input
+                  type="email"
+                  name="email"
+                  placeholder="e.g. alex@enterprise.com"
+                  value={formData.email}
+                  onChange={handleChange}
+                  required
+                />
+              </div>
 
+              <div className="form-group">
+                <label>Audit Scope / Subject</label>
+                <input
+                  type="text"
+                  name="subject"
+                  placeholder="e.g. Jenkins ZAP & SQLMap Pipeline Audit"
+                  value={formData.subject}
+                  onChange={handleChange}
+                  required
+                />
+              </div>
+
+              <div className="form-group">
+                <label>Scope Specifications & Environment Details</label>
+                <textarea
+                  name="message"
+                  rows="5"
+                  placeholder="Describe your architecture, endpoints, or penetration testing timelines..."
+                  value={formData.message}
+                  onChange={handleChange}
+                  required
+                ></textarea>
+              </div>
+
+              <button
+                type="submit"
+                className="submit-cyber-btn"
+                disabled={submitting}
+              >
+                <FaPaperPlane />
+                <span>{submitting ? "Transmitting..." : "Submit Audit Request"}</span>
+              </button>
+
+              {statusMsg && (
+                <div
+                  className={`form-status-alert ${
+                    isSuccess ? "alert-success" : "alert-error"
+                  }`}
+                >
+                  {statusMsg}
+                </div>
+              )}
+            </form>
+          </div>
         </div>
-
       </div>
-
     </section>
   );
 }
