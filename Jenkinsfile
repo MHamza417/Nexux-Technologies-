@@ -34,11 +34,14 @@ pipeline {
                     docker stop intellisecops-backend || true
                     docker rm intellisecops-backend || true
 
+                    docker volume create intellisecops-data
+
                     echo "Starting new backend container..."
 
                     docker run -d \
                         --name intellisecops-backend \
                         -p 5000:5000 \
+                        -v intellisecops-data:/data \
                         -e GEMINI_API_KEY="$GEMINI_API_KEY" \
                         intellisecops-backend:latest
 
