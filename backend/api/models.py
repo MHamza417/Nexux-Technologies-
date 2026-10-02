@@ -7,6 +7,7 @@ class VulnerabilityReport(models.Model):
     raw_json_report = models.JSONField()
     gemini_analysis = models.TextField()
     scan_type = models.CharField(max_length=20, default="ZAP")  # "ZAP" or "SQLMap"
+    vulnerability_counts = models.JSONField(default=dict, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):

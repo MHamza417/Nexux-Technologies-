@@ -25,6 +25,78 @@ scan_logger = logging.getLogger("security.scans")
 audit_logger = logging.getLogger("security.audit")
 
 
+def zap_alerts_from_report(data):
+    if isinstance(data, list):
+        return data
+    if not isinstance(data, dict):
+        return []
+
+    sites = data.get("site", [])
+    if isinstance(sites, dict):
+        sites = [sites]
+    if not isinstance(sites, list):
+        return []
+
+    return [
+        alert
+        for site in sites
+        if isinstance(site, dict)
+        for alert in site.get("alerts", [])
+        if isinstance(alert, dict)
+    ]
+
+
+def scan_vulnerability_counts(scan_type, raw_report):
+    counts = {
+        "total": 0,
+        "critical": 0,
+        "high": 0,
+        "high_critical": 0,
+        "medium": 0,
+        "low": 0,
+        "informational": 0,
+    }
+
+    if scan_type == "ZAP":
+        for alert in zap_alerts_from_report(raw_report):
+            risk = str(alert.get("riskdesc") or alert.get("risk") or "").lower()
+            counts["total"] += 1
+            if "critical" in risk:
+                counts["critical"] += 1
+                counts["high_critical"] += 1
+            elif "high" in risk:
+                counts["high"] += 1
+                counts["high_critical"] += 1
+            elif "medium" in risk:
+                counts["medium"] += 1
+            elif "low" in risk:
+                counts["low"] += 1
+            else:
+                counts["informational"] += 1
+    elif scan_type == "SQLMap" and isinstance(raw_report, dict):
+        findings = raw_report.get("findings", [])
+        if isinstance(findings, list):
+            counts["total"] = len(findings)
+            for finding in findings:
+                severity = str(
+                    finding.get("severity") or finding.get("risk") or "High"
+                ).lower()
+                if "critical" in severity:
+                    counts["critical"] += 1
+                    counts["high_critical"] += 1
+                elif "high" in severity:
+                    counts["high"] += 1
+                    counts["high_critical"] += 1
+                elif "medium" in severity:
+                    counts["medium"] += 1
+                elif "low" in severity:
+                    counts["low"] += 1
+                else:
+                    counts["informational"] += 1
+
+    return counts
+
+
 def get_gemini_client():
     """
     Configure and return the modern Google GenAI client.
@@ -200,28 +272,24 @@ class AnalyzeReportView(APIView):
     def post(self, request):
         try:
             data = request.data
-            project_name = data.get("site", "IntelliSecOps Project")
+            sites = data.get("site", []) if isinstance(data, dict) else []
+            first_site = sites[0] if isinstance(sites, list) and sites else {}
+            project_name = (
+                first_site.get("@name") or first_site.get("name")
+                if isinstance(first_site, dict)
+                else None
+            ) or "IntelliSecOps Project"
 
             # --- TOKEN OPTIMIZATION ---
-            alerts_summary = []
-            sites = data.get("site", [])
-            if isinstance(sites, list):
-                for site_item in sites:
-                    for alert in site_item.get("alerts", []):
-                        alerts_summary.append({
-                            "risk": alert.get("riskdesc"),
-                            "name": alert.get("name"),
-                            "description": alert.get("desc"),
-                            "solution": alert.get("solution"),
-                        })
-            elif isinstance(data, list):
-                for alert in data:
-                    alerts_summary.append({
-                        "risk": alert.get("riskdesc") or alert.get("risk"),
-                        "name": alert.get("name"),
-                        "description": alert.get("desc"),
-                        "solution": alert.get("solution"),
-                    })
+            alerts_summary = [
+                {
+                    "risk": alert.get("riskdesc") or alert.get("risk"),
+                    "name": alert.get("name"),
+                    "description": alert.get("desc"),
+                    "solution": alert.get("solution"),
+                }
+                for alert in zap_alerts_from_report(data)
+            ]
 
             report_payload = alerts_summary if alerts_summary else data
 
@@ -250,20 +318,18 @@ Provide:
                 raw_json_report=data,
                 gemini_analysis=gemini_text,
                 scan_type="ZAP",
+                vulnerability_counts=scan_vulnerability_counts("ZAP", data),
             )
 
             # Calculate risk metrics breakdown for Grafana structured logging
-            high_count = sum(1 for a in alerts_summary if "High" in str(a.get("risk", "")) or "Critical" in str(a.get("risk", "")))
-            med_count = sum(1 for a in alerts_summary if "Medium" in str(a.get("risk", "")))
-            low_count = sum(1 for a in alerts_summary if "Low" in str(a.get("risk", "")))
-            info_count = sum(1 for a in alerts_summary if "Informational" in str(a.get("risk", "")))
+            saved_counts = report_obj.vulnerability_counts
 
             scan_metrics = {
                 "total_alerts": len(alerts_summary),
-                "critical_high_count": high_count,
-                "medium_count": med_count,
-                "low_count": low_count,
-                "info_count": info_count,
+                "critical_high_count": saved_counts["high_critical"],
+                "medium_count": saved_counts["medium"],
+                "low_count": saved_counts["low"],
+                "info_count": saved_counts["informational"],
             }
 
             # Log scan output in structured JSON format
@@ -344,6 +410,7 @@ Provide:
                 raw_json_report=data,
                 gemini_analysis=gemini_text,
                 scan_type="SQLMap",
+                vulnerability_counts=scan_vulnerability_counts("SQLMap", data),
             )
 
             scan_metrics = {
@@ -493,7 +560,8 @@ def grafana_logs_api(request):
     Exports scan findings and audit events in structured JSON format
     for direct ingestion into Grafana dashboards, Loki, and SIEM pipelines.
     """
-    reports = VulnerabilityReport.objects.all().order_by("-created_at")[:50]
+    reports = list(VulnerabilityReport.objects.all().order_by("-created_at")[:50])
+    reports.reverse()
     log_stream = []
 
     for r in reports:
@@ -516,18 +584,33 @@ def grafana_logs_api(request):
                     "risk": f.get("type", "High"),
                 })
 
-        high_count = sum(1 for a in alerts_summary if "High" in str(a.get("risk", "")) or "Critical" in str(a.get("risk", "")))
-        med_count = sum(1 for a in alerts_summary if "Medium" in str(a.get("risk", "")))
+        counts = scan_vulnerability_counts(r.scan_type, raw_data)
+        if isinstance(r.vulnerability_counts, dict) and r.vulnerability_counts:
+            counts.update(r.vulnerability_counts)
 
         log_stream.append({
             "timestamp": r.created_at.isoformat() if r.created_at else datetime.now(timezone.utc).isoformat(),
-            "level": "CRITICAL" if high_count > 0 else ("WARN" if med_count > 0 else "INFO"),
+            "level": "CRITICAL" if counts.get("critical", 0) > 0 else (
+                "ERROR" if counts.get("high", 0) > 0 else (
+                    "WARN" if counts.get("medium", 0) > 0 else "INFO"
+                )
+            ),
             "scan_type": r.scan_type,
             "project": r.project_name,
             "report_id": r.id,
-            "total_alerts": len(alerts_summary),
-            "high_risk_alerts": high_count,
-            "medium_risk_alerts": med_count,
+            "scan_count": 1,
+            "zap_scans": int(r.scan_type == "ZAP"),
+            "sqlmap_scans": int(r.scan_type == "SQLMap"),
+            "total_alerts": counts.get("total", len(alerts_summary)),
+            "severity_counts": {
+                "critical": counts.get("critical", 0),
+                "high": counts.get("high", 0),
+                "medium": counts.get("medium", 0),
+                "low": counts.get("low", 0),
+                "informational": counts.get("informational", 0),
+            },
+            "high_risk_alerts": counts.get("high_critical", 0),
+            "medium_risk_alerts": counts.get("medium", 0),
             "analysis_preview": r.gemini_analysis[:200] + "..." if r.gemini_analysis else "No analysis available",
         })
 
@@ -556,46 +639,49 @@ def grafana_metrics_api(request):
 
     vulnerability_counts = {}
     scan_type_counts = {"ZAP": 0, "SQLMap": 0}
-    severity_counts = {"High/Critical": 0, "Medium": 0, "Low": 0, "Informational": 0}
+    severity_counts = {
+        "Critical": 0,
+        "High": 0,
+        "High/Critical": 0,
+        "Medium": 0,
+        "Low": 0,
+        "Informational": 0,
+    }
 
     for report in reports:
         scan_type = getattr(report, "scan_type", "ZAP") or "ZAP"
         scan_type_counts[scan_type] = scan_type_counts.get(scan_type, 0) + 1
 
         raw_data = report.raw_json_report
+        saved_counts = scan_vulnerability_counts(scan_type, raw_data)
+        if isinstance(report.vulnerability_counts, dict) and report.vulnerability_counts:
+            saved_counts.update(report.vulnerability_counts)
+
+        severity_counts["Critical"] += saved_counts.get("critical", 0)
+        severity_counts["High"] += saved_counts.get("high", 0)
+        severity_counts["High/Critical"] += saved_counts.get("high_critical", 0)
+        severity_counts["Medium"] += saved_counts.get("medium", 0)
+        severity_counts["Low"] += saved_counts.get("low", 0)
+        severity_counts["Informational"] += saved_counts.get("informational", 0)
 
         if scan_type == "ZAP":
-            sites = raw_data.get("site", []) if isinstance(raw_data, dict) else []
-            if isinstance(sites, list):
-                for site_item in sites:
-                    for alert in site_item.get("alerts", []):
-                        vuln_name = alert.get("name", "Unknown Vulnerability")
-                        risk = alert.get("riskdesc", "")
-                        vulnerability_counts[vuln_name] = vulnerability_counts.get(vuln_name, 0) + 1
-                        if "High" in risk or "Critical" in risk:
-                            severity_counts["High/Critical"] += 1
-                        elif "Medium" in risk:
-                            severity_counts["Medium"] += 1
-                        elif "Low" in risk:
-                            severity_counts["Low"] += 1
-                        else:
-                            severity_counts["Informational"] += 1
-            elif isinstance(raw_data, list):
-                for alert in raw_data:
-                    vuln_name = alert.get("name", "Unknown Vulnerability")
-                    vulnerability_counts[vuln_name] = vulnerability_counts.get(vuln_name, 0) + 1
+            alerts = zap_alerts_from_report(raw_data)
+            for alert in alerts:
+                vuln_name = alert.get("name", "Unknown Vulnerability")
+                vulnerability_counts[vuln_name] = vulnerability_counts.get(vuln_name, 0) + 1
 
         elif scan_type == "SQLMap":
             findings = raw_data.get("findings", []) if isinstance(raw_data, dict) else []
             for finding in findings:
                 vuln_name = finding.get("title", "SQL Injection")
                 vulnerability_counts[vuln_name] = vulnerability_counts.get(vuln_name, 0) + 1
-                severity_counts["High/Critical"] += 1
 
     data = [
         {"metric": "Total Scans", "value": total_reports},
         {"metric": "ZAP Scans", "value": scan_type_counts.get("ZAP", 0)},
         {"metric": "SQLMap Scans", "value": scan_type_counts.get("SQLMap", 0)},
+        {"metric": "Critical Severity", "value": severity_counts["Critical"]},
+        {"metric": "High Severity", "value": severity_counts["High"]},
         {"metric": "Critical & High Severity", "value": severity_counts["High/Critical"]},
         {"metric": "Medium Severity", "value": severity_counts["Medium"]},
         {"metric": "Low Severity", "value": severity_counts["Low"]},
