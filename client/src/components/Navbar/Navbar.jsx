@@ -20,7 +20,7 @@ function Navbar() {
         <div className="brand-logo">
           <FaShieldAlt className="shield-icon" />
           <div className="brand-text">
-            <span>NEXUS</span>
+            <span>AQEVORA</span>
             <small>TECHNOLOGIES</small>
           </div>
         </div>

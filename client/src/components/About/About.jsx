@@ -7,7 +7,7 @@ function About() {
     <section className="about" id="about">
 
       <div className="about-image">
-        <img src={aboutImg} alt="About Nexus Technologies" />
+        <img src={aboutImg} alt="About Aqevora Technologies" />
       </div>
 
       <div className="about-content">
@@ -20,7 +20,7 @@ function About() {
         </h2>
 
         <p>
-          Nexus Technologies is a professional software company providing
+          Aqevora Technologies is a professional software company providing
           Web Development, Mobile Applications, Cloud Computing,
           DevOps, Networking and Cyber Security solutions.
           Our goal is to help businesses grow using modern technology.

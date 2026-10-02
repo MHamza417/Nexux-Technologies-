@@ -211,8 +211,8 @@ REST_FRAMEWORK = {
 # ==========================
 
 SPECTACULAR_SETTINGS = {
-    "TITLE": "Nexus Technologies API",
-    "DESCRIPTION": "REST API documentation for Nexus Technologies DevSecOps platform.",
+    "TITLE": "Aqevora Technologies API",
+    "DESCRIPTION": "REST API documentation for Aqevora Technologies DevSecOps platform.",
     "VERSION": "1.0.0",
 
     "SERVE_INCLUDE_SCHEMA": False,

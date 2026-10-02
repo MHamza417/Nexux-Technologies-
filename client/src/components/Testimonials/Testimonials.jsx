@@ -6,7 +6,7 @@ const reviews = [
     name: "Ahmed Ali",
     company: "ABC Software House",
     review:
-      "Nexus Technologies delivered our project on time with excellent quality."
+      "Aqevora Technologies delivered our project on time with excellent quality."
   },
   {
     name: "Sarah Khan",

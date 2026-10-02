@@ -26,7 +26,7 @@ function Footer() {
 
         <div className="footer-box">
 
-          <h2>Nexus Technologies</h2>
+          <h2>Aqevora Technologies</h2>
 
           <p>
             We provide Web Development, Mobile Apps,
@@ -82,7 +82,7 @@ function Footer() {
 
           <p>📞 +92 300 1234567</p>
 
-          <p>📧 info@nexustechnologies.com</p>
+          <p>📧 info@aqevoratechnologies.com</p>
 
           <div className="footer-social">
 
@@ -103,7 +103,7 @@ function Footer() {
       <div className="footer-bottom">
 
         <p>
-          © 2026 Nexus Technologies | All Rights Reserved.
+          © 2026 Aqevora Technologies | All Rights Reserved.
         </p>
 
         <button onClick={scrollTop}>

@@ -48,7 +48,7 @@ function Hero() {
           </h1>
 
           <p className="hero-description">
-            Nexus Technologies delivers automated DAST & SAST vulnerability auditing,
+            Aqevora Technologies delivers automated DAST & SAST vulnerability auditing,
             continuous OWASP ZAP baseline verification, SQLMap database injection testing,
             and real-time Grafana JSON observability for resilient digital infrastructure.
           </p>

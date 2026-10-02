@@ -30,7 +30,7 @@ function Contact() {
 
   const handleEmailClick = () => {
     const email = "hamzadevelopers35@gmail.com";
-    const subject = encodeURIComponent("Security Audit Inquiry - Nexus Technologies");
+    const subject = encodeURIComponent("Security Audit Inquiry - Aqevora Technologies");
     const body = encodeURIComponent(
       "Hi Security Team,\n\nWe would like to request an automated security baseline & pipeline audit for our infrastructure.\n\n"
     );
@@ -148,7 +148,7 @@ function Contact() {
                 </div>
                 <div className="info-body">
                   <span className="info-label">PGP Fingerprint</span>
-                  <code className="pgp-code">4A8F-912C-DEVSECOPS-NEXUS-2026</code>
+                  <code className="pgp-code">4A8F-912C-DEVSECOPS-AQEVORA-2026</code>
                 </div>
               </div>
             </div>

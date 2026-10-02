@@ -613,7 +613,7 @@ def grafana_metrics_api(request):
 @api_view(["GET"])
 def home(request):
     return Response({
-        "message": "Welcome to Nexus Technologies DevSecOps API",
+        "message": "Welcome to Aqevora Technologies DevSecOps API",
         "status": "success",
         "version": "2.0.0",
         "endpoints": {

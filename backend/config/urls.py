@@ -14,7 +14,7 @@ from drf_spectacular.views import (
 
 def home_view(request):
     return HttpResponse(
-        "Welcome to Nexus Technologies Backend. "
+        "Welcome to Aqevora Technologies Backend. "
         "Go to /api/ for endpoints."
     )
 
