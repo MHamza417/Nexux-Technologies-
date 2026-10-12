@@ -14,6 +14,7 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny
 
 from .models import VulnerabilityReport, Service, Project, Team, ContactMessage
+from .email_reports import send_vulnerability_report
 from .serializers import (
     ServiceSerializer,
     ProjectSerializer,
@@ -334,6 +335,7 @@ Provide:
 
             # Log scan output in structured JSON format
             log_scan_event("ZAP", project_name, report_obj.id, scan_metrics, data)
+            send_vulnerability_report(report_obj)
 
             return Response(
                 {
@@ -421,6 +423,7 @@ Provide:
 
             # Log scan output in structured JSON format
             log_scan_event("SQLMap", project_name, report_obj.id, scan_metrics, data)
+            send_vulnerability_report(report_obj)
 
             return Response(
                 {

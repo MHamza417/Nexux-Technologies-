@@ -38,12 +38,19 @@ pipeline {
 
                     echo "Starting new backend container..."
 
+                    set +x
                     docker run -d \
                         --name intellisecops-backend \
                         -p 5000:5000 \
                         -v intellisecops-data:/data \
                         -e GEMINI_API_KEY="$GEMINI_API_KEY" \
+                        -e SMTP_SERVER="${SMTP_SERVER:-}" \
+                        -e SMTP_PORT="${SMTP_PORT:-587}" \
+                        -e SENDER_EMAIL="${SENDER_EMAIL:-}" \
+                        -e SENDER_PASSWORD="${SENDER_PASSWORD:-}" \
+                        -e RECIPIENT_EMAIL="${RECIPIENT_EMAIL:-}" \
                         intellisecops-backend:latest
+                    set -x
 
                     echo "Waiting for backend..."
 
