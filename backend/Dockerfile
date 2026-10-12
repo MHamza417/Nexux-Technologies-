@@ -6,9 +6,9 @@ ENV DATABASE_PATH=/data/db.sqlite3
 
 RUN mkdir -p /data
 
-COPY requirements.txt .
+COPY requirements-prod.txt .
 
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements-prod.txt
 
 COPY . .
 
