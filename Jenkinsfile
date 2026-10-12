@@ -3,7 +3,7 @@ pipeline {
 
     environment {
         GEMINI_API_KEY = credentials('GEMINI_API_KEY')
-        TARGET_URL    = 'http://13.63.222.33'
+        TARGET_URL    = 'http://127.0.0.1:5000'
     }
 
     stages {
