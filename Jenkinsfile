@@ -3,6 +3,7 @@ pipeline {
 
     environment {
         GEMINI_API_KEY = credentials('GEMINI_API_KEY')
+        SENDER_PASSWORD = credentials('smtp-sender-password')
         TARGET_URL    = 'http://127.0.0.1:5000'
     }
 
@@ -47,7 +48,7 @@ pipeline {
                         -e SMTP_SERVER="${SMTP_SERVER:-}" \
                         -e SMTP_PORT="${SMTP_PORT:-587}" \
                         -e SENDER_EMAIL="${SENDER_EMAIL:-}" \
-                        -e SENDER_PASSWORD="${SENDER_PASSWORD:-}" \
+                        -e SENDER_PASSWORD="$SENDER_PASSWORD" \
                         -e RECIPIENT_EMAIL="${RECIPIENT_EMAIL:-}" \
                         intellisecops-backend:latest
                     set -x
