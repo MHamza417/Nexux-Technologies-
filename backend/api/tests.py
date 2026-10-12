@@ -1,12 +1,9 @@
 from unittest.mock import patch
 
 from django.core.management import call_command
-from django.core import mail
 from django.test import TestCase
-from django.test.utils import override_settings
 from rest_framework.test import APIClient
 
-from .email_reports import send_vulnerability_report
 from .models import VulnerabilityReport
 
 
@@ -16,9 +13,8 @@ class ScanReportMetricsTests(TestCase):
 
 	@patch("api.views.ask_gemini", return_value="Test analysis")
 	@patch("api.views.log_scan_event")
-	@patch("api.views.send_vulnerability_report")
 	def test_scan_reports_persist_and_metrics_aggregate(
-		self, send_report, _log_scan_event, _ask_gemini
+		self, _log_scan_event, _ask_gemini
 	):
 		zap_report = {
 			"site": [{
@@ -51,7 +47,6 @@ class ScanReportMetricsTests(TestCase):
 		self.assertEqual(zap_response.status_code, 201)
 		self.assertEqual(sqlmap_response.status_code, 201)
 		self.assertEqual(VulnerabilityReport.objects.count(), 2)
-		self.assertEqual(send_report.call_count, 2)
 
 		stored_zap = VulnerabilityReport.objects.get(id=zap_response.data["report_id"])
 		self.assertEqual(stored_zap.project_name, "https://test.example")
@@ -100,35 +95,3 @@ class ScanReportMetricsTests(TestCase):
 			{"ZAP", "SQLMap"},
 		)
 		self.assertTrue(all(entry["scan_count"] == 1 for entry in logs_response.data["logs"]))
-
-	@override_settings(
-		EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend",
-		SMTP_SERVER="smtp.example.com",
-		SMTP_PORT=587,
-		SENDER_EMAIL="scanner@example.com",
-		SENDER_PASSWORD="test-password",
-		RECIPIENT_EMAIL="security@example.com",
-	)
-	def test_vulnerability_email_contains_summary_and_json_attachment(self):
-		report = VulnerabilityReport.objects.create(
-			project_name="https://test.example",
-			raw_json_report={"findings": [{"title": "SQL injection"}]},
-			gemini_analysis="Use parameterized queries.",
-			scan_type="SQLMap",
-			vulnerability_counts={
-				"total": 1,
-				"critical": 0,
-				"high": 1,
-				"medium": 0,
-				"low": 0,
-				"informational": 0,
-			},
-		)
-
-		self.assertTrue(send_vulnerability_report(report))
-		self.assertEqual(len(mail.outbox), 1)
-		self.assertIn("Total scans recorded: 1", mail.outbox[0].body)
-		self.assertIn("High: 1", mail.outbox[0].body)
-		self.assertEqual(mail.outbox[0].to, ["security@example.com"])
-		self.assertEqual(mail.outbox[0].attachments[0][0], "sqlmap-report-1.json")
-		self.assertIn('"SQL injection"', mail.outbox[0].attachments[0][1])

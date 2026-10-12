@@ -19,21 +19,6 @@ if dotenv_file.exists():
 # Gemini API Key
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-SMTP_SERVER = os.getenv("SMTP_SERVER", "")
-SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
-SENDER_EMAIL = os.getenv("SENDER_EMAIL", "")
-SENDER_PASSWORD = os.getenv("SENDER_PASSWORD", "")
-RECIPIENT_EMAIL = os.getenv("RECIPIENT_EMAIL", "")
-
-EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
-EMAIL_HOST = SMTP_SERVER
-EMAIL_PORT = SMTP_PORT
-EMAIL_HOST_USER = SENDER_EMAIL
-EMAIL_HOST_PASSWORD = SENDER_PASSWORD
-EMAIL_USE_TLS = SMTP_PORT != 465
-EMAIL_USE_SSL = SMTP_PORT == 465
-DEFAULT_FROM_EMAIL = SENDER_EMAIL
-
 
 # ==========================
 # SECURITY
