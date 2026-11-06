@@ -31,8 +31,18 @@ code, pre, .mono {
 body {
   background: var(--bg-primary);
   color: var(--text-main);
-  overflow-x: hidden;
   line-height: 1.6;
+}
+
+#root,
+.cyber-app-container {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+
+#root {
+  min-height: 100svh;
 }
 
 .cyber-app-container {

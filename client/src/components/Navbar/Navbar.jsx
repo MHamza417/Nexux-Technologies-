@@ -48,7 +48,7 @@ function Navbar() {
             </a>
           </li>
           <li>
-            <a href="#reports" onClick={() => setMobileMenuOpen(false)} className="nav-highlight">
+            <a href="#scanner" onClick={() => setMobileMenuOpen(false)} className="nav-highlight">
               <span className="nav-dot"></span> Pipeline Scans
             </a>
           </li>
@@ -66,7 +66,7 @@ function Navbar() {
       </nav>
 
       <div className="nav-right">
-        <a href="#reports" className="cyber-btn-nav">
+        <a href="#scanner" className="cyber-btn-nav">
           <FaTerminal className="btn-icon" />
           <span>Audit Console</span>
         </a>

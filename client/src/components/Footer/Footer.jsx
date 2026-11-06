@@ -82,7 +82,9 @@ function Footer() {
 
           <p>📞 +92 300 1234567</p>
 
-          <p>📧 info@aqevoratechnologies.com</p>
+          <a href="mailto:qevoratechnologies@gmail.com">
+            📧 qevoratechnologies@gmail.com
+          </a>
 
           <div className="footer-social">
 

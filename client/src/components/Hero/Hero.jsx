@@ -4,7 +4,6 @@ import {
   FaShieldAlt,
   FaTerminal,
   FaArrowRight,
-  FaLock,
   FaCheckCircle,
   FaBug,
   FaChartLine,
@@ -54,8 +53,8 @@ function Hero() {
           </p>
 
           <div className="hero-actions">
-            <a href="#reports" className="hero-btn-primary">
-              <span>View Pipeline Scans</span>
+            <a href="#scanner" className="hero-btn-primary">
+              <span>Start a security scan</span>
               <FaArrowRight />
             </a>
             <a href="#services" className="hero-btn-secondary">

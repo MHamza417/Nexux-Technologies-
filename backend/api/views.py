@@ -5,13 +5,13 @@ from datetime import datetime, timezone
 from google import genai
 
 from decouple import config
-from django.db import connection
+from django.db.models import Q
 from django.conf import settings
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
-from rest_framework.permissions import AllowAny
+from rest_framework.permissions import AllowAny, IsAuthenticated
 
 from .models import VulnerabilityReport, Service, Project, Team, ContactMessage
 from .serializers import (
@@ -90,6 +90,27 @@ def scan_vulnerability_counts(scan_type, raw_report):
                 elif "medium" in severity:
                     counts["medium"] += 1
                 elif "low" in severity:
+                    counts["low"] += 1
+                else:
+                    counts["informational"] += 1
+    elif scan_type == "SonarQube" and isinstance(raw_report, dict):
+        issues = raw_report.get("issues", [])
+        if isinstance(issues, list):
+            counts["total"] = len(issues)
+            for issue in issues:
+                if not isinstance(issue, dict):
+                    counts["informational"] += 1
+                    continue
+                severity = str(issue.get("severity") or "").lower()
+                if severity in {"blocker", "critical"}:
+                    counts["critical"] += 1
+                    counts["high_critical"] += 1
+                elif severity in {"major", "high"}:
+                    counts["high"] += 1
+                    counts["high_critical"] += 1
+                elif severity in {"minor", "medium"}:
+                    counts["medium"] += 1
+                elif severity in {"info", "low"}:
                     counts["low"] += 1
                 else:
                     counts["informational"] += 1
@@ -202,31 +223,42 @@ class AnalyzeReportView(APIView):
           and logs structured scan outputs for Grafana dashboard integration.
     GET:  Allows querying reports by ID (with raw query handling for security auditing labs).
     """
+    permission_classes = [IsAuthenticated]
 
     def get(self, request):
         report_id = request.GET.get("id")
         if report_id is not None:
             start_time = datetime.now()
-            results = []
-            error_message = None
-
-            # Educational security auditing: raw SQL query demonstration for SQLMap integration
-            sql_query = f"SELECT id, project_name, scan_type, created_at, gemini_analysis FROM api_vulnerabilityreport WHERE id = {report_id}"
-            try:
-                with connection.cursor() as cursor:
-                    cursor.execute(sql_query)
-                    cols = [col[0] for col in cursor.description] if cursor.description else []
-                    for row in cursor.fetchall():
-                        item = dict(zip(cols, row))
-                        if "created_at" in item and item["created_at"]:
-                            item["created_at"] = str(item["created_at"])
-                        results.append(item)
-            except Exception as e:
-                error_message = str(e)
+            sql_query = (
+                "ORM lookup by numeric report ID; user-submitted scan reports excluded"
+            )
+            if not report_id.isdecimal():
+                results = []
+                error_message = "Report ID must be a positive integer."
+            else:
+                results = list(
+                    VulnerabilityReport.objects.filter(
+                        id=int(report_id), scan_job__isnull=True
+                    ).values(
+                        "id", "project_name", "scan_type", "created_at",
+                        "gemini_analysis",
+                    )
+                )
+                for item in results:
+                    if item["created_at"]:
+                        item["created_at"] = item["created_at"].isoformat()
+                error_message = None
 
             elapsed_ms = (datetime.now() - start_time).total_seconds() * 1000
             client_ip = request.META.get("HTTP_X_FORWARDED_FOR") or request.META.get("REMOTE_ADDR")
-            log_audit_event(report_id, "api_vulnerabilityreport", "raw_sql", len(results), elapsed_ms, client_ip)
+            log_audit_event(
+                report_id,
+                "api_vulnerabilityreport",
+                "safe_orm",
+                len(results),
+                elapsed_ms,
+                client_ip,
+            )
 
             if error_message:
                 return Response(
@@ -249,7 +281,9 @@ class AnalyzeReportView(APIView):
             )
 
         # If no id passed, return recent scans list
-        reports = VulnerabilityReport.objects.all().order_by("-created_at")[:20]
+        reports = VulnerabilityReport.objects.filter(
+            scan_job__isnull=True
+        ).order_by("-created_at")[:20]
         summary_list = [
             {
                 "id": r.id,
@@ -364,9 +398,12 @@ class AnalyzeSQLMapReportView(APIView):
           stores result, and outputs structured JSON logs for Grafana.
     GET:  Allows querying SQLMap scan results.
     """
+    permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        reports = VulnerabilityReport.objects.filter(scan_type="SQLMap").order_by("-created_at")[:10]
+        reports = VulnerabilityReport.objects.filter(
+            scan_type="SQLMap", scan_job__isnull=True
+        ).order_by("-created_at")[:10]
         data = [
             {
                 "id": r.id,
@@ -396,11 +433,10 @@ Analyze the following SQLMap scan findings:
 Provide:
 1. Executive summary
 2. Total injection points found
-3. Type of SQL injection (boolean-based, time-based, union-based, etc.)
-4. Risk severity assessment
-5. Explanation of how each vulnerability could be exploited
-6. Recommended fixes (parameterized queries, ORM usage, input validation, etc.)
-7. Overall database security assessment
+3. Risk severity assessment
+4. Explain the finding in plain language without operational exploit instructions
+5. Recommended defensive fixes (parameterized queries, ORM usage, and input validation)
+6. General database security best practices
 """
 
             gemini_text = ask_gemini(prompt)
@@ -446,70 +482,82 @@ Provide:
 # --- Custom Search & Dynamic Query Audit Endpoint ---
 
 @api_view(["GET", "POST"])
-@permission_classes([AllowAny])
+@permission_classes([IsAuthenticated])
 def custom_security_search(request):
     """
-    Custom search endpoint for dynamic database filtering & security audit evaluation.
+    Search catalog data and legacy reports using parameterized ORM filters.
     Accepts query parameters:
       - 'q' or 'query': search query or filter string
       - 'table': target table ('services', 'reports', 'projects', 'team')
       - 'id': specific record identifier
-      - 'mode': 'raw' (raw SQL query for security audit labs) or 'safe' (ORM filtered)
-
-    Returns detailed JSON responses and writes structured logs for external log analyzers (Grafana/SIEM).
+      - 'mode': 'safe' only
     """
     data = request.data if request.method == "POST" else request.GET
-    query_param = data.get("query") or data.get("q") or ""
-    table = data.get("table", "services").lower()
+    query_param = str(data.get("query") or data.get("q") or "").strip()
+    table = str(data.get("table", "services")).lower()
     record_id = data.get("id")
-    mode = data.get("mode", "raw").lower()
+    mode = str(data.get("mode", "safe")).lower()
 
     start_time = datetime.now()
-    results = []
-    error_message = None
-    executed_sql = None
+    if mode != "safe":
+        return Response(
+            {"status": "error", "message": "Raw SQL search is disabled; use mode=safe."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    if len(query_param) > 200:
+        return Response(
+            {"status": "error", "message": "Search text must be 200 characters or fewer."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
 
-    table_mapping = {
-        "services": ("api_service", "id, title, description, icon"),
-        "reports": ("api_vulnerabilityreport", "id, project_name, scan_type, created_at"),
-        "projects": ("api_project", "id, title, description, technologies"),
-        "team": ("api_team", "id, name, position"),
+    table_models = {
+        "services": (
+            Service,
+            ("id", "title", "description", "icon"),
+            Q(title__icontains=query_param) | Q(description__icontains=query_param),
+        ),
+        "projects": (
+            Project,
+            ("id", "title", "description", "technologies"),
+            Q(title__icontains=query_param) | Q(description__icontains=query_param),
+        ),
+        "team": (
+            Team,
+            ("id", "name", "position"),
+            Q(name__icontains=query_param) | Q(position__icontains=query_param),
+        ),
+        "reports": (
+            VulnerabilityReport,
+            ("id", "project_name", "scan_type", "created_at"),
+            Q(project_name__icontains=query_param),
+        ),
     }
+    if table not in table_models:
+        return Response(
+            {"status": "error", "message": "Unknown search table."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
 
-    db_table, select_fields = table_mapping.get(table, ("api_service", "id, title, description, icon"))
-
-    if mode == "safe":
-        # Safe ORM execution
-        if table == "services":
-            qs = Service.objects.filter(title__icontains=query_param)
-            results = [{"id": s.id, "title": s.title, "description": s.description} for s in qs]
-        elif table == "projects":
-            qs = Project.objects.filter(title__icontains=query_param)
-            results = [{"id": p.id, "title": p.title, "technologies": p.technologies} for p in qs]
-        else:
-            qs = VulnerabilityReport.objects.filter(project_name__icontains=query_param)
-            results = [{"id": r.id, "project_name": r.project_name, "scan_type": r.scan_type} for r in qs]
-        executed_sql = "ORM filter (safe parameterized)"
-    else:
-        # Dynamic raw SQL query execution for security auditing evaluation
-        if record_id:
-            executed_sql = f"SELECT {select_fields} FROM {db_table} WHERE id = {record_id}"
-        elif query_param:
-            executed_sql = f"SELECT {select_fields} FROM {db_table} WHERE title LIKE '%{query_param}%' OR description LIKE '%{query_param}%'" if table in ["services", "projects"] else f"SELECT {select_fields} FROM {db_table} WHERE project_name LIKE '%{query_param}%'"
-        else:
-            executed_sql = f"SELECT {select_fields} FROM {db_table} LIMIT 20"
-
-        try:
-            with connection.cursor() as cursor:
-                cursor.execute(executed_sql)
-                cols = [col[0] for col in cursor.description] if cursor.description else []
-                for row in cursor.fetchall():
-                    row_dict = dict(zip(cols, row))
-                    if "created_at" in row_dict and row_dict["created_at"]:
-                        row_dict["created_at"] = str(row_dict["created_at"])
-                    results.append(row_dict)
-        except Exception as e:
-            error_message = str(e)
+    model, fields, search_filter = table_models[table]
+    queryset = model.objects.all()
+    if table == "reports":
+        queryset = queryset.filter(scan_job__isnull=True)
+    if record_id:
+        if not str(record_id).isdecimal():
+            return Response(
+                {"status": "error", "message": "Record ID must be a positive integer."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        queryset = queryset.filter(id=int(record_id))
+    elif query_param:
+        queryset = queryset.filter(search_filter)
+    results = list(queryset.values(*fields).order_by("id")[:20])
+    for item in results:
+        if item.get("created_at"):
+            item["created_at"] = item["created_at"].isoformat()
+    db_table = model._meta.db_table
+    executed_sql = "Parameterized ORM lookup"
+    mode = "safe"
 
     elapsed_ms = (datetime.now() - start_time).total_seconds() * 1000
     client_ip = request.META.get("HTTP_X_FORWARDED_FOR") or request.META.get("REMOTE_ADDR")
@@ -523,18 +571,6 @@ def custom_security_search(request):
         exec_time_ms=elapsed_ms,
         client_ip=client_ip,
     )
-
-    if error_message:
-        return Response(
-            {
-                "status": "error",
-                "message": error_message,
-                "query_executed": executed_sql,
-                "table": table,
-                "mode": mode,
-            },
-            status=status.HTTP_400_BAD_REQUEST,
-        )
 
     return Response(
         {
@@ -554,20 +590,26 @@ def custom_security_search(request):
 # --- Grafana Log Exporter API ---
 
 @api_view(["GET"])
-@permission_classes([AllowAny])
+@permission_classes([IsAuthenticated])
 def grafana_logs_api(request):
     """
     Exports scan findings and audit events in structured JSON format
     for direct ingestion into Grafana dashboards, Loki, and SIEM pipelines.
     """
-    reports = list(VulnerabilityReport.objects.all().order_by("-created_at")[:50])
+    reports = list(
+        VulnerabilityReport.objects.select_related("scan_job")
+        .order_by("-created_at")[:50]
+    )
     reports.reverse()
     log_stream = []
 
     for r in reports:
+        is_private_scan = hasattr(r, "scan_job")
         raw_data = r.raw_json_report or {}
         alerts_summary = []
-        if r.scan_type == "ZAP":
+        if is_private_scan:
+            alerts_summary = []
+        elif r.scan_type == "ZAP":
             sites = raw_data.get("site", []) if isinstance(raw_data, dict) else []
             if isinstance(sites, list):
                 for site in sites:
@@ -596,7 +638,7 @@ def grafana_logs_api(request):
                 )
             ),
             "scan_type": r.scan_type,
-            "project": r.project_name,
+            "project": "Authorized scan" if is_private_scan else r.project_name,
             "report_id": r.id,
             "scan_count": 1,
             "zap_scans": int(r.scan_type == "ZAP"),
@@ -611,7 +653,13 @@ def grafana_logs_api(request):
             },
             "high_risk_alerts": counts.get("high_critical", 0),
             "medium_risk_alerts": counts.get("medium", 0),
-            "analysis_preview": r.gemini_analysis[:200] + "..." if r.gemini_analysis else "No analysis available",
+            "analysis_preview": (
+                "Private report; retrieve it through the authenticated scan API."
+                if is_private_scan
+                else r.gemini_analysis[:200] + "..."
+                if r.gemini_analysis
+                else "No analysis available"
+            ),
         })
 
     return Response(
@@ -628,7 +676,7 @@ def grafana_logs_api(request):
 # --- Grafana Metrics API ---
 
 @api_view(["GET"])
-@permission_classes([AllowAny])
+@permission_classes([IsAuthenticated])
 def grafana_metrics_api(request):
     """
     Endpoint for Grafana to fetch vulnerability metrics/summary from SQLite database.

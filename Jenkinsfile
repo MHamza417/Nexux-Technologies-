@@ -1,14 +1,25 @@
 pipeline {
     agent any
 
+    parameters {
+        choice(name: 'PIPELINE_MODE', choices: ['deploy', 'scan'], description: 'Run deployment or an API-submitted scan')
+        choice(name: 'SCAN_TARGET_TYPE', choices: ['website', 'repository'], description: 'Target type for scan mode')
+        string(name: 'SCAN_ID', defaultValue: '', description: 'Backend-owned scan UUID')
+        string(name: 'SCAN_TARGET', defaultValue: '', description: 'Validated website or repository URL from the API')
+        string(name: 'WAZUH_MANAGER_SERVER', defaultValue: '', description: 'Optional private Wazuh Manager address for the deployment log agent')
+    }
+
     environment {
         GEMINI_API_KEY = credentials('GEMINI_API_KEY')
-        TARGET_URL    = 'http://127.0.0.1:5000'
+        TARGET_URL    = "${params.SCAN_TARGET}"
     }
 
     stages {
 
         stage('SonarQube Analysis') {
+            when {
+                expression { params.PIPELINE_MODE == 'deploy' }
+            }
             steps {
                 catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
                     script {
@@ -23,8 +34,16 @@ pipeline {
         }
 
         stage('Build and Deploy Backend') {
+            when {
+                expression { params.PIPELINE_MODE == 'deploy' }
+            }
             steps {
-                sh '''
+                withCredentials([
+                    string(credentialsId: 'DJANGO_SECRET_KEY', variable: 'DJANGO_SECRET_KEY'),
+                    string(credentialsId: 'DJANGO_ALLOWED_HOSTS', variable: 'DJANGO_ALLOWED_HOSTS'),
+                    string(credentialsId: 'CORS_ALLOWED_ORIGINS', variable: 'CORS_ALLOWED_ORIGINS')
+                ]) {
+                    sh '''
                     echo "Building Docker image..."
 
                     docker build -t intellisecops-backend:latest ./backend
@@ -35,15 +54,21 @@ pipeline {
                     docker rm intellisecops-backend || true
 
                     docker volume create intellisecops-data
+                    docker volume create intellisecops-logs
 
                     echo "Starting new backend container..."
 
                     set +x
                     docker run -d \
                         --name intellisecops-backend \
-                        -p 5000:5000 \
+                        -p 127.0.0.1:5000:5000 \
                         -v intellisecops-data:/data \
+                        -v intellisecops-logs:/app/logs \
                         -e GEMINI_API_KEY="$GEMINI_API_KEY" \
+                        -e DJANGO_DEBUG=false \
+                        -e DJANGO_SECRET_KEY="$DJANGO_SECRET_KEY" \
+                        -e DJANGO_ALLOWED_HOSTS="$DJANGO_ALLOWED_HOSTS" \
+                        -e CORS_ALLOWED_ORIGINS="$CORS_ALLOWED_ORIGINS" \
                         intellisecops-backend:latest
                     set -x
 
@@ -54,7 +79,7 @@ pipeline {
                             echo "Backend is up."
                             break
                         fi
-                        echo "Backend not ready yet, retrying ($i/10)..."
+                    echo "Backend not ready yet, retrying ($i/10)..."
                         sleep 3
                     done
 
@@ -66,11 +91,109 @@ pipeline {
                     docker exec intellisecops-backend python manage.py migrate --noinput
 
                     echo "Backend deployed successfully!"
+                    '''
+                }
+            }
+        }
+
+        stage('Deploy Wazuh Log Agent') {
+            when {
+                expression {
+                    params.PIPELINE_MODE == 'deploy' && params.WAZUH_MANAGER_SERVER?.trim()
+                }
+            }
+            steps {
+                sh '''
+                    set +x
+                    docker build -t intellisecops-wazuh-agent:4.14.10 ./deploy/wazuh
+
+                    docker stop intellisecops-wazuh-agent || true
+                    docker rm intellisecops-wazuh-agent || true
+
+                    docker run -d \
+                        --name intellisecops-wazuh-agent \
+                        --restart unless-stopped \
+                        -e WAZUH_MANAGER_SERVER="$WAZUH_MANAGER_SERVER" \
+                        -v intellisecops-logs:/var/log/intellisecops:ro \
+                        intellisecops-wazuh-agent:4.14.10
                 '''
             }
         }
 
+        stage('Start User Scan') {
+            when {
+                expression { params.PIPELINE_MODE == 'scan' }
+            }
+            steps {
+                withCredentials([
+                    string(credentialsId: 'SCAN_PIPELINE_TOKEN', variable: 'SCAN_PIPELINE_TOKEN'),
+                    string(credentialsId: 'SCAN_API_BASE_URL', variable: 'SCAN_API_BASE_URL')
+                ]) {
+                    sh '''
+                        set +x
+                        CALLBACK_BODY=$(python3 -c 'import json,os; print(json.dumps({"status":"running","target_type":os.environ["SCAN_TARGET_TYPE"],"target":os.environ["SCAN_TARGET"]}))')
+                        curl --fail --silent --show-error \
+                            -X POST "$SCAN_API_BASE_URL/api/scans/$SCAN_ID/pipeline-result/" \
+                            -H "X-Scan-Pipeline-Token: $SCAN_PIPELINE_TOKEN" \
+                            -H "Content-Type: application/json" \
+                            --data "$CALLBACK_BODY"
+                    '''
+                }
+            }
+        }
+
+        stage('SonarQube Repository Scan') {
+            when {
+                expression {
+                    params.PIPELINE_MODE == 'scan' && params.SCAN_TARGET_TYPE == 'repository'
+                }
+            }
+            agent {
+                label 'isolated-scan-worker'
+            }
+            options {
+                timeout(time: 30, unit: 'MINUTES')
+            }
+            steps {
+                script {
+                    def scannerHome = tool 'Sonar-Server'
+                    dir('submitted-source') {
+                        deleteDir()
+                        sh 'git clone --depth 1 --single-branch -- "$SCAN_TARGET" .'
+                        def projectDirectory = pwd()
+                        withEnv([
+                            "SONAR_PROJECT_KEY=IntelliSecOps-${params.SCAN_ID}",
+                            "SONAR_PROJECT_DIRECTORY=${projectDirectory}"
+                        ]) {
+                            withSonarQubeEnv('SonarQube') {
+                                sh """
+                                    "${scannerHome}/bin/sonar-scanner" \
+                                      -Dsonar.projectKey="\$SONAR_PROJECT_KEY" \
+                                      -Dsonar.projectName="\$SONAR_PROJECT_KEY" \
+                                      -Dsonar.sources=. \
+                                      -Dsonar.scm.disabled=true
+                                """
+                                sh 'python3 ../scripts/sonar_issues_report.py > ../scan-result.json'
+                            }
+                        }
+                    }
+                    stash name: 'intellisecops-sonar-report', includes: 'scan-result.json'
+                }
+            }
+        }
+
         stage('OWASP ZAP Scan') {
+            when {
+                expression {
+                    params.PIPELINE_MODE == 'scan' && params.SCAN_TARGET_TYPE == 'website'
+                }
+            }
+            agent {
+                label 'isolated-scan-worker'
+            }
+            options {
+                timeout(time: 30, unit: 'MINUTES')
+            }
             steps {
                 sh '''
                     echo "Preparing ZAP reports directory..."
@@ -85,7 +208,7 @@ pipeline {
                         -v "$(pwd)/zap-reports:/zap/wrk" \
                         ghcr.io/zaproxy/zaproxy:stable \
                         zap-baseline.py \
-                        -t $TARGET_URL \
+                        -t "$TARGET_URL" \
                         -r report.html \
                         -J report.json || true
 
@@ -95,154 +218,61 @@ pipeline {
 
                     ls -lah zap-reports
                 '''
+                script {
+                    if (params.PIPELINE_MODE == 'scan') {
+                        stash name: 'intellisecops-zap-report', includes: 'zap-reports/report.json'
+                    }
+                }
             }
         }
 
-        stage('SQLMap Scan') {
-            steps {
-                sh '''
-                    echo "Preparing SQLMap reports directory..."
 
-                    mkdir -p sqlmap-reports
-                    chmod 777 sqlmap-reports
-
-                    echo "Starting SQLMap database scan..."
-
-                    if [ ! -d "sqlmap-tool" ]; then
-                        git clone --depth 1 https://github.com/sqlmapproject/sqlmap.git sqlmap-tool
-                    fi
-
-                    python3 sqlmap-tool/sqlmap.py \
-                        -u "$TARGET_URL/api/analyze-report/?id=1" \
-                        --batch \
-                        --level=2 \
-                        --risk=1 \
-                        -v 1 | tee sqlmap-reports/sqlmap_output.log || true
-
-                    echo "SQLMap scan completed."
-
-                    echo "Parsing SQLMap output into JSON..."
-                    python3 parse_sqlmap.py \
-                        "$TARGET_URL/api/analyze-report/?id=1" \
-                        sqlmap-reports/sqlmap_output.log \
-                        sqlmap-reports/sqlmap_findings.json
-
-                    echo "Generated reports:"
-                    ls -lah sqlmap-reports || true
-                '''
+        stage('Send User Scan Report to Django') {
+            when {
+                expression { params.PIPELINE_MODE == 'scan' }
             }
-        }
-
-        stage('Send SQLMap Report to Django') {
-            steps {
-                sh '''
-                    echo "Sending SQLMap findings to Django API..."
-
-                    if [ -f sqlmap-reports/sqlmap_findings.json ]; then
-
-                        HTTP_STATUS=$(curl -s -o django_sqlmap_response.json -w "%{http_code}" -X POST \
-                            http://127.0.0.1:5000/api/analyze-sqlmap-report/ \
-                            -H "Content-Type: application/json" \
-                            --data-binary @sqlmap-reports/sqlmap_findings.json)
-
-                        echo "Django responded with HTTP $HTTP_STATUS"
-                        echo "Response body:"
-                        cat django_sqlmap_response.json
-                        echo ""
-
-                        if [ "$HTTP_STATUS" -ge 200 ] && [ "$HTTP_STATUS" -lt 300 ]; then
-                            echo "SQLMap report successfully sent to Django!"
-                        else
-                            echo "Django rejected the SQLMap report. Backend logs:"
-                            docker logs intellisecops-backend --tail 50 || true
-                        fi
-
-                    else
-                        echo "WARNING: sqlmap_findings.json was not generated, skipping."
-                    fi
-                '''
+            agent {
+                label 'isolated-scan-worker'
             }
-        }
-
-        stage('Send Report to Django') {
-            steps {
-                sh '''
-                    echo "Sending ZAP report to Django API..."
-
-                    if [ -f zap-reports/report.json ]; then
-
-                        HTTP_STATUS=$(curl -s -o django_response.json -w "%{http_code}" -X POST \
-                            http://127.0.0.1:5000/api/analyze-report/ \
-                            -H "Content-Type: application/json" \
-                            --data-binary @zap-reports/report.json)
-
-                        echo "Django responded with HTTP $HTTP_STATUS"
-                        echo "Response body:"
-                        cat django_response.json
-                        echo ""
-
-                        if [ "$HTTP_STATUS" -ge 200 ] && [ "$HTTP_STATUS" -lt 300 ]; then
-                            echo "ZAP report successfully sent to Django!"
-                        else
-                            echo "Django rejected the report. Backend logs:"
-                            docker logs intellisecops-backend --tail 50 || true
-                            exit 1
-                        fi
-
-                    else
-
-                        echo "ERROR: ZAP report.json was not generated!"
-                        exit 1
-
-                    fi
-                '''
-            }
-        }
-
-        stage('Smart Security Gate') {
             steps {
                 script {
-                    def highRiskCount = sh(
-                        script: '''
-                            python3 -c "
-import json
-try:
-    with open('zap-reports/report.json') as f:
-        data = json.load(f)
-    count = 0
-    sites = data.get('site', [])
-    if isinstance(sites, list):
-        for s in sites:
-            for alert in s.get('alerts', []):
-                risk = alert.get('riskdesc', '')
-                if risk.startswith('High') or risk.startswith('Critical'):
-                    count += 1
-    print(count)
-except Exception as e:
-    print(0)
-"
-                        ''',
-                        returnStdout: true
-                    ).trim()
-
-                    echo "High/Critical risk vulnerabilities found: ${highRiskCount}"
-
-                    if (highRiskCount.toInteger() > 0) {
-                        env.SECURITY_GATE_STATUS = "BLOCKED"
-                        error("Smart Security Gate: Deployment BLOCKED — ${highRiskCount} high/critical risk vulnerability(ies) detected!")
+                    if (params.SCAN_TARGET_TYPE == 'website') {
+                        unstash 'intellisecops-zap-report'
+                        sh '''
+                            python3 -c 'import json,os,sys; json.dump({"status":"completed","scan_type":"ZAP","target_type":os.environ["SCAN_TARGET_TYPE"],"target":os.environ["SCAN_TARGET"],"report":json.load(sys.stdin)},sys.stdout)' \
+                                < zap-reports/report.json > scan-result.json
+                        '''
                     } else {
-                        env.SECURITY_GATE_STATUS = "PASSED"
-                        echo "Smart Security Gate: No high/critical vulnerabilities found. Deployment allowed."
+                        unstash 'intellisecops-sonar-report'
                     }
+                }
+                withCredentials([
+                    string(credentialsId: 'SCAN_PIPELINE_TOKEN', variable: 'SCAN_PIPELINE_TOKEN'),
+                    string(credentialsId: 'SCAN_API_BASE_URL', variable: 'SCAN_API_BASE_URL')
+                ]) {
+                    sh '''
+                        set +x
+                        HTTP_STATUS=$(curl -s -o django_scan_response.json -w "%{http_code}" -X POST \
+                            "$SCAN_API_BASE_URL/api/scans/$SCAN_ID/pipeline-result/" \
+                            --connect-timeout 10 \
+                            --max-time 120 \
+                            -H "X-Scan-Pipeline-Token: $SCAN_PIPELINE_TOKEN" \
+                            -H "Content-Type: application/json" \
+                            --data-binary @scan-result.json)
+                        if [ "$HTTP_STATUS" -lt 200 ] || [ "$HTTP_STATUS" -ge 300 ]; then
+                            echo "Django rejected the scan result (HTTP $HTTP_STATUS)."
+                            exit 1
+                        fi
+                    '''
                 }
             }
         }
 
         stage('Archive Reports') {
             steps {
-                echo 'Archiving ZAP and SQLMap reports...'
+                echo 'Archiving available ZAP reports...'
 
-                archiveArtifacts artifacts: 'zap-reports/*, sqlmap-reports/**',
+                archiveArtifacts artifacts: 'zap-reports/*',
                     allowEmptyArchive: true
 
                 echo 'Reports archived successfully!'
@@ -251,6 +281,27 @@ except Exception as e:
     }
 
     post {
+        failure {
+            script {
+                if (params.PIPELINE_MODE == 'scan' && params.SCAN_ID) {
+                    withCredentials([
+                        string(credentialsId: 'SCAN_PIPELINE_TOKEN', variable: 'SCAN_PIPELINE_TOKEN'),
+                        string(credentialsId: 'SCAN_API_BASE_URL', variable: 'SCAN_API_BASE_URL')
+                    ]) {
+                        sh '''
+                            set +x
+                            CALLBACK_BODY=$(python3 -c 'import json,os; print(json.dumps({"status":"failed","error":"The isolated scanner pipeline failed. Check the restricted Jenkins build log.","target_type":os.environ.get("SCAN_TARGET_TYPE",""),"target":os.environ.get("SCAN_TARGET","")}))')
+                            curl --silent --show-error \
+                                -X POST "$SCAN_API_BASE_URL/api/scans/$SCAN_ID/pipeline-result/" \
+                                -H "X-Scan-Pipeline-Token: $SCAN_PIPELINE_TOKEN" \
+                                -H "Content-Type: application/json" \
+                                --data "$CALLBACK_BODY" \
+                                || true
+                        '''
+                    }
+                }
+            }
+        }
         success {
             echo '======================================'
             echo 'PIPELINE COMPLETED SUCCESSFULLY!'
@@ -260,19 +311,7 @@ except Exception as e:
                 tokenCredentialId: 'slack-token',
                 channel: '#all-pipeline-notifier',
                 color: 'good',
-                message: "✅ *IntelliSecOps Pipeline SUCCESS*\nBuild: #${env.BUILD_NUMBER}\nSecurity Gate: ${env.SECURITY_GATE_STATUS ?: 'N/A'}\nDetails: ${env.BUILD_URL}"
-            )
-
-            emailext(
-                subject: "✅ IntelliSecOps Build #${env.BUILD_NUMBER} - SUCCESS",
-                body: """
-                    <h2>Pipeline Completed Successfully</h2>
-                    <p><b>Build:</b> #${env.BUILD_NUMBER}</p>
-                    <p><b>Security Gate Status:</b> ${env.SECURITY_GATE_STATUS ?: 'N/A'}</p>
-                    <p><b>Build URL:</b> <a href="${env.BUILD_URL}">${env.BUILD_URL}</a></p>
-                """,
-                mimeType: 'text/html',
-                to: 'hamzamayo570@gmail.com'
+                message: "✅ *IntelliSecOps Pipeline SUCCESS*\nBuild: #${env.BUILD_NUMBER}\nDetails: ${env.BUILD_URL}"
             )
         }
 
@@ -287,19 +326,6 @@ except Exception as e:
                 channel: '#all-pipeline-notifier',
                 color: 'danger',
                 message: "❌ *IntelliSecOps Pipeline FAILED*\nBuild: #${env.BUILD_NUMBER}\nDetails: ${env.BUILD_URL}"
-            )
-
-            emailext(
-                subject: "🚨 IntelliSecOps Build #${env.BUILD_NUMBER} - FAILED",
-                body: """
-                    <h2>Pipeline Failed</h2>
-                    <p><b>Build:</b> #${env.BUILD_NUMBER}</p>
-                    <p><b>Security Gate Status:</b> ${env.SECURITY_GATE_STATUS ?: 'N/A'}</p>
-                    <p>Check console output for details:</p>
-                    <p><a href="${env.BUILD_URL}console">${env.BUILD_URL}console</a></p>
-                """,
-                mimeType: 'text/html',
-                to: 'hamzamayo570@gmail.com'
             )
         }
     }

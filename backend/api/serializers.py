@@ -1,5 +1,12 @@
 from rest_framework import serializers
-from .models import Service, Project, Team, ContactMessage
+from .models import ScanJob, Service, Project, Team, ContactMessage
+
+
+class ScanSubmissionSerializer(serializers.Serializer):
+    target_type = serializers.ChoiceField(choices=ScanJob.TargetType.choices)
+    target = serializers.CharField(max_length=2048)
+    authorized = serializers.BooleanField()
+    include_ai = serializers.BooleanField(required=False, default=False)
 
 
 class ServiceSerializer(serializers.ModelSerializer):

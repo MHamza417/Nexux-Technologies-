@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import "./SecurityReports.css";
+import { API_BASE } from "../../api/intellisecops";
 import {
   FaShieldAlt,
   FaDatabase,
@@ -13,8 +14,6 @@ import {
   FaCode,
   FaCopy,
 } from "react-icons/fa";
-
-const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:5000";
 
 function SecurityReports() {
   const [activeTab, setActiveTab] = useState("all");

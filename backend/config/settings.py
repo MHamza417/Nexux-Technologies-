@@ -1,6 +1,7 @@
 import os
 from pathlib import Path
 import dotenv
+from django.core.exceptions import ImproperlyConfigured
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -24,11 +25,22 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 # SECURITY
 # ==========================
 
-SECRET_KEY = 'django-insecure-change-this-later'
+DEBUG = os.getenv("DJANGO_DEBUG", "true").strip().lower() in {"1", "true", "yes"}
+SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "")
+if not SECRET_KEY:
+    if not DEBUG:
+        raise ImproperlyConfigured("DJANGO_SECRET_KEY must be set when DEBUG is disabled.")
+    SECRET_KEY = "django-insecure-change-this-later"
 
-DEBUG = True
-
-ALLOWED_HOSTS = ['*']
+ALLOWED_HOSTS = [
+    host.strip()
+    for host in os.getenv("DJANGO_ALLOWED_HOSTS", "*" if DEBUG else "").split(",")
+    if host.strip()
+]
+if not ALLOWED_HOSTS or (not DEBUG and "*" in ALLOWED_HOSTS):
+    raise ImproperlyConfigured(
+        "Set DJANGO_ALLOWED_HOSTS to explicit hostnames when DEBUG is disabled."
+    )
 
 
 # ==========================
@@ -119,12 +131,44 @@ WSGI_APPLICATION = 'config.wsgi.application'
 # DATABASE
 # ==========================
 
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': os.getenv('DATABASE_PATH', str(BASE_DIR / 'db.sqlite3')),
+DATABASE_ENGINE = os.getenv("DATABASE_ENGINE", "sqlite").strip().lower()
+if DATABASE_ENGINE == "sqlite":
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.sqlite3",
+            "NAME": os.getenv("DATABASE_PATH", str(BASE_DIR / "db.sqlite3")),
+        }
     }
-}
+elif DATABASE_ENGINE in {"postgres", "postgresql"}:
+    postgres_name = os.getenv("POSTGRES_DB", "")
+    postgres_user = os.getenv("POSTGRES_USER", "")
+    postgres_password = os.getenv("POSTGRES_PASSWORD", "")
+    postgres_host = os.getenv("POSTGRES_HOST", "")
+    if not all((postgres_name, postgres_user, postgres_password, postgres_host)):
+        raise ImproperlyConfigured(
+            "POSTGRES_DB, POSTGRES_USER, POSTGRES_PASSWORD, and POSTGRES_HOST "
+            "must be set when DATABASE_ENGINE=postgresql."
+        )
+    postgres_options = {}
+    postgres_sslmode = os.getenv("POSTGRES_SSLMODE", "").strip()
+    if postgres_sslmode:
+        postgres_options["sslmode"] = postgres_sslmode
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.postgresql",
+            "NAME": postgres_name,
+            "USER": postgres_user,
+            "PASSWORD": postgres_password,
+            "HOST": postgres_host,
+            "PORT": os.getenv("POSTGRES_PORT", "5432"),
+            "CONN_MAX_AGE": int(os.getenv("POSTGRES_CONN_MAX_AGE", "60")),
+            "OPTIONS": postgres_options,
+        }
+    }
+else:
+    raise ImproperlyConfigured(
+        "DATABASE_ENGINE must be either sqlite or postgresql."
+    )
 
 
 # ==========================
@@ -185,7 +229,12 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 # CORS
 # ==========================
 
-CORS_ALLOW_ALL_ORIGINS = True
+CORS_ALLOWED_ORIGINS = [
+    origin.strip()
+    for origin in os.getenv("CORS_ALLOWED_ORIGINS", "").split(",")
+    if origin.strip()
+]
+CORS_ALLOW_ALL_ORIGINS = DEBUG and not CORS_ALLOWED_ORIGINS
 
 
 # ==========================
@@ -203,7 +252,63 @@ REST_FRAMEWORK = {
 
     # Swagger / OpenAPI
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
+    "DEFAULT_THROTTLE_RATES": {
+        "scan_submission": os.getenv("SCAN_SUBMISSION_RATE", "5/hour"),
+        "public_scan_submission": os.getenv("PUBLIC_SCAN_SUBMISSION_RATE", "20/hour"),
+    },
 }
+
+
+# ==========================
+# Scanner handoff and notifications
+# ==========================
+
+SCAN_WORKER_ISOLATED = os.getenv(
+    "SCAN_WORKER_ISOLATED", "false"
+).strip().lower() in {"1", "true", "yes"}
+JENKINS_URL = os.getenv("JENKINS_URL", "").rstrip("/")
+JENKINS_SCAN_JOB = os.getenv("JENKINS_SCAN_JOB", "")
+JENKINS_USER = os.getenv("JENKINS_USER", "")
+JENKINS_API_TOKEN = os.getenv("JENKINS_API_TOKEN", "")
+SCAN_PIPELINE_TOKEN = os.getenv("SCAN_PIPELINE_TOKEN", "")
+MAX_SCAN_REPORT_BYTES = int(os.getenv("MAX_SCAN_REPORT_BYTES", str(20 * 1024 * 1024)))
+FRONTEND_BASE_URL = os.getenv("FRONTEND_BASE_URL", "http://localhost:3000").rstrip("/")
+SCAN_GATE_FAIL_SEVERITY = os.getenv(
+    "SCAN_GATE_FAIL_SEVERITY", "high"
+).strip().lower()
+if SCAN_GATE_FAIL_SEVERITY not in {
+    "critical", "high", "medium", "low", "informational"
+}:
+    raise ImproperlyConfigured(
+        "SCAN_GATE_FAIL_SEVERITY must be critical, high, medium, low, or informational."
+    )
+DATA_UPLOAD_MAX_MEMORY_SIZE = MAX_SCAN_REPORT_BYTES
+SECURE_CONTENT_TYPE_NOSNIFF = True
+X_FRAME_OPTIONS = "DENY"
+SECURE_REFERRER_POLICY = "same-origin"
+SESSION_COOKIE_SECURE = not DEBUG
+CSRF_COOKIE_SECURE = not DEBUG
+SECURE_SSL_REDIRECT = (
+    os.getenv("DJANGO_SECURE_SSL_REDIRECT", "false").strip().lower()
+    in {"1", "true", "yes"}
+)
+SECURE_HSTS_SECONDS = int(os.getenv("DJANGO_HSTS_SECONDS", "0"))
+
+EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
+EMAIL_HOST = os.getenv("SMTP_HOST", "")
+EMAIL_PORT = int(os.getenv("SMTP_PORT", "587"))
+EMAIL_HOST_USER = os.getenv("SMTP_USER", "")
+EMAIL_HOST_PASSWORD = os.getenv("SMTP_PASSWORD", "")
+EMAIL_USE_TLS = os.getenv("SMTP_USE_TLS", "true").strip().lower() in {"1", "true", "yes"}
+EMAIL_USE_SSL = os.getenv("SMTP_USE_SSL", "false").strip().lower() in {"1", "true", "yes"}
+EMAIL_TIMEOUT = int(os.getenv("SMTP_TIMEOUT", "10"))
+DEFAULT_FROM_EMAIL = os.getenv("SMTP_FROM_EMAIL", "")
+SECURITY_NOTIFICATIONS_ENABLED = (
+    os.getenv("SECURITY_NOTIFICATIONS_ENABLED", "false").strip().lower()
+    in {"1", "true", "yes"}
+)
+if EMAIL_USE_TLS and EMAIL_USE_SSL:
+    raise ImproperlyConfigured("SMTP_USE_TLS and SMTP_USE_SSL cannot both be enabled.")
 
 
 # ==========================

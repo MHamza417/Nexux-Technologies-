@@ -2,6 +2,7 @@ import "./App.css";
 
 import Navbar from "./components/Navbar/Navbar";
 import Hero from "./components/Hero/Hero";
+import SecurityScanner from "./components/SecurityScanner/SecurityScanner";
 import SecurityReports from "./components/SecurityReports/SecurityReports";
 import About from "./components/About/About";
 import Services from "./components/Services/Services";
@@ -17,6 +18,7 @@ function App() {
       <Navbar />
       <main>
         <Hero />
+        <SecurityScanner />
         <SecurityReports />
         <About />
         <Services />

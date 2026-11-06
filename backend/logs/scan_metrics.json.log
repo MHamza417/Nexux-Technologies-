@@ -1,0 +1,42 @@
+Could not deliver scan notification for scan 5fe5172f-df68-4c66-ab4c-e66b12c12850.
+Traceback (most recent call last):
+  File "E:\Nexux Technologies\backend\api\scan_security.py", line 407, in send_security_report
+    send_mail(
+    ~~~~~~~~~^
+        subject=subject,
+        ^^^^^^^^^^^^^^^^
+    ...<4 lines>...
+        html_message=html_message,
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Users\hp\AppData\Local\Programs\Python\Python313\Lib\unittest\mock.py", line 1169, in __call__
+    return self._mock_call(*args, **kwargs)
+           ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+  File "C:\Users\hp\AppData\Local\Programs\Python\Python313\Lib\unittest\mock.py", line 1173, in _mock_call
+    return self._execute_mock_call(*args, **kwargs)
+           ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+  File "C:\Users\hp\AppData\Local\Programs\Python\Python313\Lib\unittest\mock.py", line 1228, in _execute_mock_call
+    raise effect
+OSError: SMTP unavailable
+Could not deliver scan notification for scan c858dcec-655f-45d4-bc5f-fd7fb8232374.
+Traceback (most recent call last):
+  File "E:\Nexux Technologies\backend\api\scan_security.py", line 407, in send_security_report
+    send_mail(
+    ~~~~~~~~~^
+        subject=subject,
+        ^^^^^^^^^^^^^^^^
+    ...<4 lines>...
+        html_message=html_message,
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Users\hp\AppData\Local\Programs\Python\Python313\Lib\unittest\mock.py", line 1169, in __call__
+    return self._mock_call(*args, **kwargs)
+           ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+  File "C:\Users\hp\AppData\Local\Programs\Python\Python313\Lib\unittest\mock.py", line 1173, in _mock_call
+    return self._execute_mock_call(*args, **kwargs)
+           ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+  File "C:\Users\hp\AppData\Local\Programs\Python\Python313\Lib\unittest\mock.py", line 1228, in _execute_mock_call
+    raise effect
+OSError: SMTP unavailable

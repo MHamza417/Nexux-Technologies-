@@ -212,11 +212,12 @@
 /* Reports Grid */
 .reports-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 360px), 1fr));
   gap: 28px;
 }
 
 .report-card {
+  min-width: 0;
   background: rgba(15, 23, 42, 0.85);
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 20px;
@@ -248,12 +249,16 @@
 
 .card-header {
   display: flex;
+  flex-wrap: wrap;
   justify-content: space-between;
   align-items: center;
   margin-bottom: 18px;
 }
 
 .scanner-badge {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
   display: inline-flex;
   align-items: center;
   gap: 8px;
@@ -341,6 +346,7 @@
   font-size: 13px;
   color: #94a3b8;
   margin-bottom: 20px;
+  overflow-wrap: anywhere;
 }
 
 .target-url code {
@@ -440,6 +446,9 @@
 
 .summary-item {
   display: flex;
+  min-width: 0;
+  gap: 0.75rem;
+  overflow-wrap: anywhere;
   justify-content: space-between;
   align-items: center;
 }
@@ -464,12 +473,15 @@
 /* Card Actions */
 .card-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 12px;
   margin-top: auto;
 }
 
 .card-btn {
   flex: 1;
+  min-width: min(100%, 140px);
+  overflow-wrap: anywhere;
   padding: 12px 18px;
   border-radius: 10px;
   font-size: 13px;

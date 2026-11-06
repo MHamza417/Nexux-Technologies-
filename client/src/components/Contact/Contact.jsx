@@ -28,16 +28,6 @@ function Contact() {
     setFormData({ ...formData, [e.target.name]: e.target.value });
   };
 
-  const handleEmailClick = () => {
-    const email = "hamzadevelopers35@gmail.com";
-    const subject = encodeURIComponent("Security Audit Inquiry - Aqevora Technologies");
-    const body = encodeURIComponent(
-      "Hi Security Team,\n\nWe would like to request an automated security baseline & pipeline audit for our infrastructure.\n\n"
-    );
-    const gmailUrl = `https://mail.google.com/mail/?view=cm&fs=1&to=${email}&su=${subject}&body=${body}`;
-    window.open(gmailUrl, "_blank");
-  };
-
   const handlePhoneClick = () => {
     window.location.href = "tel:+923191073635";
   };
@@ -120,15 +110,15 @@ function Contact() {
               </div>
 
               {/* Email */}
-              <div className="contact-info-card" onClick={handleEmailClick}>
+              <a className="contact-info-card" href="mailto:qevoratechnologies@gmail.com">
                 <div className="info-icon email">
                   <FaEnvelope />
                 </div>
                 <div className="info-body">
                   <span className="info-label">Security Operations Email</span>
-                  <strong className="info-val">hamzadevelopers35@gmail.com</strong>
+                  <strong className="info-val">qevoratechnologies@gmail.com</strong>
                 </div>
-              </div>
+              </a>
 
               {/* Location */}
               <div className="contact-info-card">

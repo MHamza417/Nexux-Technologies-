@@ -1,4 +1,15 @@
 from django.urls import path
+from .scan_views import (
+    pipeline_callback,
+    public_scan_detail,
+    public_scan_download,
+    public_scan_submit,
+    scan_detail,
+    scan_history,
+    scan_report,
+    scan_submit,
+)
+from .scan_views import dashboard_summary
 from .views import (
     home,
     service_list,
@@ -21,6 +32,23 @@ urlpatterns = [
     path('contact/', contact_submit, name='contact_submit'),
 
     # DevSecOps & Scan Analysis
+    path('scans/', scan_submit, name='scan-submit'),
+    path('public/scans/', public_scan_submit, name='public-scan-submit'),
+    path('public/scans/<uuid:scan_id>/', public_scan_detail, name='public-scan-detail'),
+    path(
+        'public/scans/<uuid:scan_id>/download/',
+        public_scan_download,
+        name='public-scan-download',
+    ),
+    path('dashboard/', dashboard_summary, name='dashboard-summary'),
+    path('scans/history/', scan_history, name='scan-history'),
+    path('scans/<uuid:scan_id>/', scan_detail, name='scan-detail'),
+    path('scans/<uuid:scan_id>/report/', scan_report, name='scan-report'),
+    path(
+        'scans/<uuid:scan_id>/pipeline-result/',
+        pipeline_callback,
+        name='scan-pipeline-callback',
+    ),
     path('github/webhook/', github_webhook, name='github_webhook'),
     path('analyze-report/', AnalyzeReportView.as_view(), name='analyze-report'),
     path('analyze-sqlmap-report/', AnalyzeSQLMapReportView.as_view(), name='analyze-sqlmap-report'),

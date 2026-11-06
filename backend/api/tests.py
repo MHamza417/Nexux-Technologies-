@@ -1,5 +1,6 @@
 from unittest.mock import patch
 
+from django.contrib.auth import get_user_model
 from django.core.management import call_command
 from django.test import TestCase
 from rest_framework.test import APIClient
@@ -10,6 +11,27 @@ from .models import VulnerabilityReport
 class ScanReportMetricsTests(TestCase):
 	def setUp(self):
 		self.client = APIClient()
+		user = get_user_model().objects.create_user(username="metrics-reader")
+		self.client.force_authenticate(user=user)
+
+	def test_raw_search_mode_is_disabled(self):
+		response = self.client.get(
+			"/api/audit/search/",
+			{
+				"table": "services",
+				"query": "untrusted search text",
+				"mode": "raw",
+			},
+		)
+		self.assertEqual(response.status_code, 400)
+		self.assertIn("Raw SQL search is disabled", response.data["message"])
+
+		safe_response = self.client.get(
+			"/api/audit/search/",
+			{"table": "services", "query": "ordinary text", "mode": "safe"},
+		)
+		self.assertEqual(safe_response.status_code, 200)
+		self.assertEqual(safe_response.data["query_executed"], "Parameterized ORM lookup")
 
 	@patch("api.views.ask_gemini", return_value="Test analysis")
 	@patch("api.views.log_scan_event")

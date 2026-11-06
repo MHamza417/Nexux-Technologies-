@@ -1,0 +1,43 @@
+services:
+  backend:
+    build:
+      context: ./backend
+    restart: unless-stopped
+    env_file:
+      - ./backend/.env
+    environment:
+      DATABASE_PATH: /data/db.sqlite3
+      DJANGO_DEBUG: "false"
+    ports:
+      - "127.0.0.1:5000:5000"
+    volumes:
+      - intellisecops-data:/data
+      - ${INTELLISECOPS_LOG_DIR:-./backend/logs}:/app/logs
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5000/health/', timeout=3)"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  wazuh-agent:
+    build:
+      context: ./deploy/wazuh
+    image: intellisecops-wazuh-agent:4.14.10
+    profiles:
+      - wazuh
+    restart: unless-stopped
+    environment:
+      WAZUH_MANAGER_SERVER: ${WAZUH_MANAGER_SERVER:-wazuh-manager}
+    volumes:
+      - ${INTELLISECOPS_LOG_DIR:-./backend/logs}:/var/log/intellisecops:ro
+    depends_on:
+      backend:
+        condition: service_healthy
+
+volumes:
+  intellisecops-data:
