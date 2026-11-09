@@ -123,8 +123,10 @@ disclosure policy are approved.
 
 ## Local Docker / AWS deployment preparation
 
-The Compose file runs only the Django backend and binds port 5000 to loopback;
-put it behind an authenticated TLS reverse proxy before remote access:
+The Compose file runs the Django backend and static frontend. The backend binds
+port 5000 and the frontend binds port 8080 to loopback; put the services behind
+an authenticated TLS reverse proxy before remote access. Rebuild and recreate
+the frontend after pulling changes so Nginx serves the new Vite `dist` output:
 
 ```powershell
 if (-not (Test-Path backend\.env)) {
@@ -132,12 +134,17 @@ if (-not (Test-Path backend\.env)) {
 }
 # Preserve an existing backend\.env; merge required settings without replacing
 # its secret values. Set a secret key and actual allowed/CORS hostnames.
-docker compose build backend
-docker compose up -d backend
+docker compose build frontend backend
+docker compose up -d frontend backend
 docker compose exec backend python manage.py migrate --noinput
 docker compose ps
 docker compose logs --tail 100 backend
+docker compose logs --tail 100 frontend
 ```
+
+The frontend is reachable locally on `http://127.0.0.1:8080` for a reverse
+proxy to route to. `docker compose up -d --build frontend` is sufficient to
+rebuild and replace only the frontend after a later frontend-only update.
 
 The default configuration uses the existing SQLite database volume. PostgreSQL
 is supported by setting `DATABASE_ENGINE=postgresql` and supplying
