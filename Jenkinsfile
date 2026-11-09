@@ -100,7 +100,7 @@ pipeline {
                             sleep 3
                         done
 
-                        echo "Checking backend health..."
+                        echo "Checking backend..."
 
                         curl --fail http://127.0.0.1:5000
 
@@ -167,12 +167,12 @@ pipeline {
 
         stage('SonarQube Repository Scan') {
             when {
-    beforeAgent true
-    expression {
-        params.PIPELINE_MODE == 'scan' &&
-        params.SCAN_TARGET_TYPE == 'repository'
-    }
-}
+                beforeAgent true
+                expression {
+                    params.PIPELINE_MODE == 'scan' &&
+                    params.SCAN_TARGET_TYPE == 'repository'
+                }
+            }
             agent {
                 label 'isolated-scan-worker'
             }
@@ -216,6 +216,7 @@ pipeline {
 
         stage('OWASP ZAP Scan') {
             when {
+                beforeAgent true
                 expression {
                     params.PIPELINE_MODE == 'scan' &&
                     params.SCAN_TARGET_TYPE == 'website'
@@ -252,16 +253,17 @@ pipeline {
                     ls -lah zap-reports
                 '''
 
-                script {
-                    stash name: 'intellisecops-zap-report',
-                        includes: 'zap-reports/report.json'
-                }
+                stash name: 'intellisecops-zap-report',
+                    includes: 'zap-reports/report.json'
             }
         }
 
         stage('Send User Scan Report to Django') {
             when {
-                expression { params.PIPELINE_MODE == 'scan' }
+                beforeAgent true
+                expression {
+                    params.PIPELINE_MODE == 'scan'
+                }
             }
             agent {
                 label 'isolated-scan-worker'
