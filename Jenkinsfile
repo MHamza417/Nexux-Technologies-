@@ -1,3 +1,4 @@
+
 pipeline {
     agent any
 
@@ -11,7 +12,7 @@ pipeline {
 
     environment {
         GEMINI_API_KEY = credentials('GEMINI_API_KEY')
-        TARGET_URL    = "${params.SCAN_TARGET}"
+        TARGET_URL = "${params.SCAN_TARGET}"
     }
 
     stages {
@@ -24,7 +25,6 @@ pipeline {
                 catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
                     script {
                         def scannerHome = tool 'Sonar-Server'
-
                         withSonarQubeEnv('SonarQube') {
                             sh "${scannerHome}/bin/sonar-scanner"
                         }
@@ -79,7 +79,7 @@ pipeline {
                             echo "Backend is up."
                             break
                         fi
-                    echo "Backend not ready yet, retrying ($i/10)..."
+                        echo "Backend not ready yet, retrying ($i/10)..."
                         sleep 3
                     done
 
@@ -226,7 +226,6 @@ pipeline {
             }
         }
 
-
         stage('Send User Scan Report to Django') {
             when {
                 expression { params.PIPELINE_MODE == 'scan' }
@@ -301,21 +300,7 @@ pipeline {
                     }
                 }
             }
-        }
-        success {
-            echo '======================================'
-            echo 'PIPELINE COMPLETED SUCCESSFULLY!'
-            echo '======================================'
 
-            slackSend(
-                tokenCredentialId: 'slack-token',
-                channel: '#all-pipeline-notifier',
-                color: 'good',
-                message: "✅ *IntelliSecOps Pipeline SUCCESS*\nBuild: #${env.BUILD_NUMBER}\nDetails: ${env.BUILD_URL}"
-            )
-        }
-
-        failure {
             echo '======================================'
             echo 'PIPELINE FAILED!'
             echo 'Check the Jenkins console output.'
@@ -326,6 +311,19 @@ pipeline {
                 channel: '#all-pipeline-notifier',
                 color: 'danger',
                 message: "❌ *IntelliSecOps Pipeline FAILED*\nBuild: #${env.BUILD_NUMBER}\nDetails: ${env.BUILD_URL}"
+            )
+        }
+
+        success {
+            echo '======================================'
+            echo 'PIPELINE COMPLETED SUCCESSFULLY!'
+            echo '======================================'
+
+            slackSend(
+                tokenCredentialId: 'slack-token',
+                channel: '#all-pipeline-notifier',
+                color: 'good',
+                message: "✅ *IntelliSecOps Pipeline SUCCESS*\nBuild: #${env.BUILD_NUMBER}\nDetails: ${env.BUILD_URL}"
             )
         }
     }
