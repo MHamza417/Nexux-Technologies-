@@ -167,11 +167,12 @@ pipeline {
 
         stage('SonarQube Repository Scan') {
             when {
-                expression {
-                    params.PIPELINE_MODE == 'scan' &&
-                    params.SCAN_TARGET_TYPE == 'repository'
-                }
-            }
+    beforeAgent true
+    expression {
+        params.PIPELINE_MODE == 'scan' &&
+        params.SCAN_TARGET_TYPE == 'repository'
+    }
+}
             agent {
                 label 'isolated-scan-worker'
             }
