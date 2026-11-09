@@ -7,7 +7,7 @@ pipeline {
         choice(name: 'SCAN_TARGET_TYPE', choices: ['website', 'repository'], description: 'Target type for scan mode')
         string(name: 'SCAN_ID', defaultValue: '', description: 'Backend-owned scan UUID')
         string(name: 'SCAN_TARGET', defaultValue: '', description: 'Validated website or repository URL from the API')
-        string(name: 'WAZUH_MANAGER_SERVER', defaultValue: '', description: 'Optional private Wazuh Manager address for the deployment log agent')
+        string(name: 'WAZUH_MANAGER_SERVER', defaultValue: '', description: 'Optional private Wazuh Manager address')
     }
 
     environment {
@@ -25,6 +25,7 @@ pipeline {
                 catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
                     script {
                         def scannerHome = tool 'Sonar-Server'
+
                         withSonarQubeEnv('SonarQube') {
                             sh "${scannerHome}/bin/sonar-scanner"
                         }
@@ -44,53 +45,71 @@ pipeline {
                     string(credentialsId: 'CORS_ALLOWED_ORIGINS', variable: 'CORS_ALLOWED_ORIGINS')
                 ]) {
                     sh '''
-                    echo "Building Docker image..."
+                        set -e
 
-                    docker build -t intellisecops-backend:latest ./backend
+                        echo "Building Docker image..."
 
-                    echo "Stopping old container..."
+                        docker build -t intellisecops-backend:latest ./backend
 
-                    docker stop intellisecops-backend || true
-                    docker rm intellisecops-backend || true
+                        echo "Stopping old container..."
 
-                    docker volume create intellisecops-data
-                    docker volume create intellisecops-logs
+                        docker stop intellisecops-backend || true
+                        docker rm intellisecops-backend || true
 
-                    echo "Starting new backend container..."
+                        echo "Creating persistent Docker volumes..."
 
-                    set +x
-                    docker run -d \
-                        --name intellisecops-backend \
-                        -p 127.0.0.1:5000:5000 \
-                        -v intellisecops-data:/data \
-                        -v intellisecops-logs:/app/logs \
-                        -e GEMINI_API_KEY="$GEMINI_API_KEY" \
-                        -e DJANGO_DEBUG=false \
-                        -e DJANGO_SECRET_KEY="$DJANGO_SECRET_KEY" \
-                        -e DJANGO_ALLOWED_HOSTS="$DJANGO_ALLOWED_HOSTS" \
-                        -e CORS_ALLOWED_ORIGINS="$CORS_ALLOWED_ORIGINS" \
-                        intellisecops-backend:latest
-                    set -x
+                        docker volume create intellisecops-data
+                        docker volume create intellisecops-logs
 
-                    echo "Waiting for backend..."
+                        echo "Fixing database volume permissions..."
 
-                    for i in $(seq 1 10); do
-                        if curl -sf http://127.0.0.1:5000 > /dev/null; then
-                            echo "Backend is up."
-                            break
-                        fi
-                        echo "Backend not ready yet, retrying ($i/10)..."
-                        sleep 3
-                    done
+                        docker run --rm \
+                            --user root \
+                            -v intellisecops-data:/data \
+                            intellisecops-backend:latest \
+                            sh -c "chown -R app:app /data"
 
-                    echo "Checking backend health..."
+                        echo "Starting new backend container..."
 
-                    curl -f http://127.0.0.1:5000
+                        set +x
 
-                    echo "Running database migrations..."
-                    docker exec intellisecops-backend python manage.py migrate --noinput
+                        docker run -d \
+                            --name intellisecops-backend \
+                            --restart unless-stopped \
+                            -p 127.0.0.1:5000:5000 \
+                            -v intellisecops-data:/data \
+                            -v intellisecops-logs:/app/logs \
+                            -e GEMINI_API_KEY="$GEMINI_API_KEY" \
+                            -e DJANGO_DEBUG=false \
+                            -e DJANGO_SECRET_KEY="$DJANGO_SECRET_KEY" \
+                            -e DJANGO_ALLOWED_HOSTS="$DJANGO_ALLOWED_HOSTS" \
+                            -e CORS_ALLOWED_ORIGINS="$CORS_ALLOWED_ORIGINS" \
+                            intellisecops-backend:latest
 
-                    echo "Backend deployed successfully!"
+                        set -x
+
+                        echo "Waiting for backend..."
+
+                        for i in $(seq 1 15); do
+                            if curl -sf http://127.0.0.1:5000 > /dev/null; then
+                                echo "Backend is up."
+                                break
+                            fi
+
+                            echo "Backend not ready yet ($i/15)..."
+                            sleep 3
+                        done
+
+                        echo "Checking backend health..."
+
+                        curl --fail http://127.0.0.1:5000
+
+                        echo "Running database migrations..."
+
+                        docker exec intellisecops-backend \
+                            python manage.py migrate --noinput
+
+                        echo "Backend deployed successfully!"
                     '''
                 }
             }
@@ -99,12 +118,14 @@ pipeline {
         stage('Deploy Wazuh Log Agent') {
             when {
                 expression {
-                    params.PIPELINE_MODE == 'deploy' && params.WAZUH_MANAGER_SERVER?.trim()
+                    params.PIPELINE_MODE == 'deploy' &&
+                    params.WAZUH_MANAGER_SERVER?.trim()
                 }
             }
             steps {
                 sh '''
-                    set +x
+                    set -e
+
                     docker build -t intellisecops-wazuh-agent:4.14.10 ./deploy/wazuh
 
                     docker stop intellisecops-wazuh-agent || true
@@ -131,7 +152,9 @@ pipeline {
                 ]) {
                     sh '''
                         set +x
+
                         CALLBACK_BODY=$(python3 -c 'import json,os; print(json.dumps({"status":"running","target_type":os.environ["SCAN_TARGET_TYPE"],"target":os.environ["SCAN_TARGET"]}))')
+
                         curl --fail --silent --show-error \
                             -X POST "$SCAN_API_BASE_URL/api/scans/$SCAN_ID/pipeline-result/" \
                             -H "X-Scan-Pipeline-Token: $SCAN_PIPELINE_TOKEN" \
@@ -145,7 +168,8 @@ pipeline {
         stage('SonarQube Repository Scan') {
             when {
                 expression {
-                    params.PIPELINE_MODE == 'scan' && params.SCAN_TARGET_TYPE == 'repository'
+                    params.PIPELINE_MODE == 'scan' &&
+                    params.SCAN_TARGET_TYPE == 'repository'
                 }
             }
             agent {
@@ -157,10 +181,14 @@ pipeline {
             steps {
                 script {
                     def scannerHome = tool 'Sonar-Server'
+
                     dir('submitted-source') {
                         deleteDir()
+
                         sh 'git clone --depth 1 --single-branch -- "$SCAN_TARGET" .'
+
                         def projectDirectory = pwd()
+
                         withEnv([
                             "SONAR_PROJECT_KEY=IntelliSecOps-${params.SCAN_ID}",
                             "SONAR_PROJECT_DIRECTORY=${projectDirectory}"
@@ -173,11 +201,14 @@ pipeline {
                                       -Dsonar.sources=. \
                                       -Dsonar.scm.disabled=true
                                 """
+
                                 sh 'python3 ../scripts/sonar_issues_report.py > ../scan-result.json'
                             }
                         }
                     }
-                    stash name: 'intellisecops-sonar-report', includes: 'scan-result.json'
+
+                    stash name: 'intellisecops-sonar-report',
+                        includes: 'scan-result.json'
                 }
             }
         }
@@ -185,7 +216,8 @@ pipeline {
         stage('OWASP ZAP Scan') {
             when {
                 expression {
-                    params.PIPELINE_MODE == 'scan' && params.SCAN_TARGET_TYPE == 'website'
+                    params.PIPELINE_MODE == 'scan' &&
+                    params.SCAN_TARGET_TYPE == 'website'
                 }
             }
             agent {
@@ -196,6 +228,8 @@ pipeline {
             }
             steps {
                 sh '''
+                    set -e
+
                     echo "Preparing ZAP reports directory..."
 
                     mkdir -p zap-reports
@@ -214,14 +248,12 @@ pipeline {
 
                     echo "ZAP scan completed."
 
-                    echo "Generated reports:"
-
                     ls -lah zap-reports
                 '''
+
                 script {
-                    if (params.PIPELINE_MODE == 'scan') {
-                        stash name: 'intellisecops-zap-report', includes: 'zap-reports/report.json'
-                    }
+                    stash name: 'intellisecops-zap-report',
+                        includes: 'zap-reports/report.json'
                 }
             }
         }
@@ -237,6 +269,7 @@ pipeline {
                 script {
                     if (params.SCAN_TARGET_TYPE == 'website') {
                         unstash 'intellisecops-zap-report'
+
                         sh '''
                             python3 -c 'import json,os,sys; json.dump({"status":"completed","scan_type":"ZAP","target_type":os.environ["SCAN_TARGET_TYPE"],"target":os.environ["SCAN_TARGET"],"report":json.load(sys.stdin)},sys.stdout)' \
                                 < zap-reports/report.json > scan-result.json
@@ -245,12 +278,14 @@ pipeline {
                         unstash 'intellisecops-sonar-report'
                     }
                 }
+
                 withCredentials([
                     string(credentialsId: 'SCAN_PIPELINE_TOKEN', variable: 'SCAN_PIPELINE_TOKEN'),
                     string(credentialsId: 'SCAN_API_BASE_URL', variable: 'SCAN_API_BASE_URL')
                 ]) {
                     sh '''
                         set +x
+
                         HTTP_STATUS=$(curl -s -o django_scan_response.json -w "%{http_code}" -X POST \
                             "$SCAN_API_BASE_URL/api/scans/$SCAN_ID/pipeline-result/" \
                             --connect-timeout 10 \
@@ -258,20 +293,26 @@ pipeline {
                             -H "X-Scan-Pipeline-Token: $SCAN_PIPELINE_TOKEN" \
                             -H "Content-Type: application/json" \
                             --data-binary @scan-result.json)
+
                         if [ "$HTTP_STATUS" -lt 200 ] || [ "$HTTP_STATUS" -ge 300 ]; then
                             echo "Django rejected the scan result (HTTP $HTTP_STATUS)."
                             exit 1
                         fi
+
+                        echo "Scan report sent successfully."
                     '''
                 }
             }
         }
 
         stage('Archive Reports') {
+            when {
+                expression { params.PIPELINE_MODE == 'scan' }
+            }
             steps {
-                echo 'Archiving available ZAP reports...'
+                echo 'Archiving scan reports...'
 
-                archiveArtifacts artifacts: 'zap-reports/*',
+                archiveArtifacts artifacts: 'zap-reports/*,scan-result.json',
                     allowEmptyArchive: true
 
                 echo 'Reports archived successfully!'
@@ -289,7 +330,9 @@ pipeline {
                     ]) {
                         sh '''
                             set +x
+
                             CALLBACK_BODY=$(python3 -c 'import json,os; print(json.dumps({"status":"failed","error":"The isolated scanner pipeline failed. Check the restricted Jenkins build log.","target_type":os.environ.get("SCAN_TARGET_TYPE",""),"target":os.environ.get("SCAN_TARGET","")}))')
+
                             curl --silent --show-error \
                                 -X POST "$SCAN_API_BASE_URL/api/scans/$SCAN_ID/pipeline-result/" \
                                 -H "X-Scan-Pipeline-Token: $SCAN_PIPELINE_TOKEN" \
@@ -299,19 +342,9 @@ pipeline {
                         '''
                     }
                 }
+
+                echo 'PIPELINE FAILED! Check Jenkins console output.'
             }
-
-            echo '======================================'
-            echo 'PIPELINE FAILED!'
-            echo 'Check the Jenkins console output.'
-            echo '======================================'
-
-            slackSend(
-                tokenCredentialId: 'slack-token',
-                channel: '#all-pipeline-notifier',
-                color: 'danger',
-                message: "❌ *IntelliSecOps Pipeline FAILED*\nBuild: #${env.BUILD_NUMBER}\nDetails: ${env.BUILD_URL}"
-            )
         }
 
         success {
@@ -319,12 +352,18 @@ pipeline {
             echo 'PIPELINE COMPLETED SUCCESSFULLY!'
             echo '======================================'
 
-            slackSend(
-                tokenCredentialId: 'slack-token',
-                channel: '#all-pipeline-notifier',
-                color: 'good',
-                message: "✅ *IntelliSecOps Pipeline SUCCESS*\nBuild: #${env.BUILD_NUMBER}\nDetails: ${env.BUILD_URL}"
-            )
+            script {
+                try {
+                    slackSend(
+                        tokenCredentialId: 'slack-token',
+                        channel: '#all-pipeline-notifier',
+                        color: 'good',
+                        message: "IntelliSecOps Pipeline SUCCESS - Build #${env.BUILD_NUMBER} - ${env.BUILD_URL}"
+                    )
+                } catch (err) {
+                    echo "Slack notification failed: ${err}"
+                }
+            }
         }
     }
 }
