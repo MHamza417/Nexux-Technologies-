@@ -107,11 +107,24 @@ Required to trigger website scans:
 
 - `SCAN_WORKER_ISOLATED=true` only after verifying the Jenkins worker network boundary
 - `JENKINS_URL`, `JENKINS_SCAN_JOB`, `JENKINS_USER`, `JENKINS_API_TOKEN`
+- Set `JENKINS_SCAN_JOB` to the exact Jenkins job/folder path that loads this
+  repository's `Jenkinsfile`.
 - `SCAN_PIPELINE_TOKEN`: shared secret, identical to the Jenkins credential
 - Jenkins Secret Text credentials `SCAN_PIPELINE_TOKEN` and `SCAN_API_BASE_URL`
   (`SCAN_API_BASE_URL` must be the HTTPS URL reachable from the Jenkins agent)
 - The corresponding service account/API token and `SCAN_PIPELINE_TOKEN` must
   be supplied to Django through the server's secret manager/environment.
+
+Jenkins must use HTTPS by default. For testing on a private, access-controlled
+network only, `ALLOW_INSECURE_JENKINS=true` allows an HTTP `JENKINS_URL`; do not
+use this setting over an untrusted network. The authenticated integrations
+health check is `GET /api/integrations/health/` and reports Jenkins and
+SonarQube reachability without exposing tokens.
+
+Website scans currently run only ZAP's passive `zap-baseline.py`; no active ZAP
+or SQLMap execution path is provided. The `authorized` submission field is a
+user attestation, not independent proof of target ownership. Do not enable
+active scanning or SQLMap without a separate verified-ownership gate.
 
 `SCAN_SUBMISSION_RATE` defaults to `5/hour`; `MAX_SCAN_REPORT_BYTES` defaults
 to 20 MiB. Optional Gemini uses `GEMINI_API_KEY`.

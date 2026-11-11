@@ -1,5 +1,5 @@
-from unittest.mock import patch
 from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 from django.contrib.auth import get_user_model
 from django.test import TestCase, override_settings
@@ -7,6 +7,7 @@ from rest_framework.test import APIClient
 
 from . import scan_security
 from .models import ScanJob, VulnerabilityReport
+from .scan_pipeline import PipelineUnavailable, trigger_scan_pipeline
 from .scan_views import _finding_values
 
 
@@ -394,6 +395,115 @@ class ScanApiTests(TestCase):
         )
         self.assertFalse(scan_security.send_security_report(scan, []))
         send_mail.assert_not_called()
+
+
+class JenkinsPipelineConfigTests(TestCase):
+    def setUp(self):
+        self.scan = SimpleNamespace(
+            id="scan-id",
+            target_type="website",
+            target="https://example.com/",
+        )
+
+    @override_settings(
+        SCAN_WORKER_ISOLATED=True,
+        JENKINS_URL="http://jenkins.internal:8080",
+        JENKINS_SCAN_JOB="IntelliSecOps/Scan",
+        JENKINS_USER="scanner",
+        JENKINS_API_TOKEN="jenkins-token",
+        SCAN_PIPELINE_TOKEN="callback-token",
+        ALLOW_INSECURE_JENKINS=False,
+    )
+    def test_http_jenkins_url_is_rejected_by_default(self):
+        with self.assertRaisesRegex(PipelineUnavailable, "HTTPS URL"):
+            trigger_scan_pipeline(self.scan)
+
+    @override_settings(
+        SCAN_WORKER_ISOLATED=True,
+        JENKINS_URL="http://jenkins.internal:8080",
+        JENKINS_SCAN_JOB="IntelliSecOps/Scan",
+        JENKINS_USER="scanner",
+        JENKINS_API_TOKEN="jenkins-token",
+        SCAN_PIPELINE_TOKEN="callback-token",
+        ALLOW_INSECURE_JENKINS=True,
+    )
+    def test_allowed_http_request_uses_configured_job_and_timeout(self):
+        response = MagicMock()
+        response.status = 201
+        response.__enter__.return_value = response
+        opener = MagicMock()
+        opener.open.return_value = response
+        with patch("api.scan_pipeline.build_opener", return_value=opener):
+            trigger_scan_pipeline(self.scan)
+
+        request = opener.open.call_args.args[0]
+        self.assertIn(
+            "http://jenkins.internal:8080/job/IntelliSecOps/job/Scan/buildWithParameters",
+            request.full_url,
+        )
+        self.assertIn("PIPELINE_MODE=scan", request.full_url)
+        self.assertEqual(opener.open.call_args.kwargs["timeout"], 10)
+
+
+class IntegrationsHealthTests(TestCase):
+    def setUp(self):
+        user = get_user_model().objects.create_user(username="health-reader")
+        self.client = APIClient()
+        self.client.force_authenticate(user=user)
+
+    @override_settings(
+        JENKINS_URL="https://jenkins.example",
+        SONAR_URL="https://sonar.example",
+        SONAR_TOKEN="sonar-token",
+    )
+    def test_health_endpoint_checks_both_services_and_authenticates_sonar(self):
+        jenkins_response = MagicMock()
+        jenkins_response.status = 200
+        jenkins_response.__enter__.return_value = jenkins_response
+        sonar_response = MagicMock()
+        sonar_response.status = 200
+        sonar_response.read.return_value = b'{"status":"UP"}'
+        sonar_response.__enter__.return_value = sonar_response
+        with patch(
+            "api.health_views.urlopen",
+            side_effect=[jenkins_response, sonar_response],
+        ) as open_url:
+            result = self.client.get("/api/integrations/health/")
+
+        self.assertEqual(result.status_code, 200)
+        self.assertEqual(result.data["jenkins"]["status"], "OK")
+        self.assertEqual(result.data["sonarqube"]["status"], "OK")
+        self.assertEqual(open_url.call_count, 2)
+        self.assertEqual(open_url.call_args_list[1].kwargs["timeout"], 5)
+        self.assertTrue(
+            open_url.call_args_list[1].args[0]
+            .get_header("Authorization")
+            .startswith("Basic ")
+        )
+
+    def test_health_endpoint_requires_authentication(self):
+        self.client.force_authenticate(user=None)
+        response = self.client.get("/api/integrations/health/")
+        self.assertEqual(response.status_code, 401)
+
+    @override_settings(
+        JENKINS_URL="https://jenkins.example",
+        SONAR_URL="https://sonar.example",
+        SONAR_TOKEN="",
+    )
+    def test_health_endpoint_reports_connection_errors(self):
+        from urllib.error import URLError
+
+        with patch(
+            "api.health_views.urlopen",
+            side_effect=URLError("connection refused"),
+        ):
+            response = self.client.get("/api/integrations/health/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["jenkins"]["status"], "error")
+        self.assertIn("connection refused", response.data["jenkins"]["detail"])
+        self.assertEqual(response.data["sonarqube"]["status"], "error")
 
 
 class PublicScanApiTests(TestCase):

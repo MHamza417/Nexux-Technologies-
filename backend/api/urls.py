@@ -23,6 +23,7 @@ from .views import (
     grafana_logs_api,
     custom_security_search,
 )
+from .health_views import integrations_health
 
 urlpatterns = [
     path('', home, name='home'),
@@ -32,6 +33,7 @@ urlpatterns = [
     path('contact/', contact_submit, name='contact_submit'),
 
     # DevSecOps & Scan Analysis
+    path('integrations/health/', integrations_health, name='integrations-health'),
     path('scans/', scan_submit, name='scan-submit'),
     path('public/scans/', public_scan_submit, name='public-scan-submit'),
     path('public/scans/<uuid:scan_id>/', public_scan_detail, name='public-scan-detail'),

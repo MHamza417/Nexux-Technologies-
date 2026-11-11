@@ -1,6 +1,6 @@
 import base64
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode, quote
+from urllib.parse import urlencode, quote, urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from django.conf import settings
@@ -29,8 +29,20 @@ def trigger_scan_pipeline(scan):
     if not all((base_url, job_name, username, token, callback_token)):
         raise PipelineUnavailable("Jenkins scan pipeline credentials are not configured.")
 
-    if not base_url.startswith("https://"):
+    try:
+        parsed_url = urlsplit(base_url)
+    except ValueError as exc:
+        raise PipelineUnavailable("Jenkins URL is invalid.") from exc
+    if (
+        parsed_url.scheme != "https"
+        and not (
+            parsed_url.scheme == "http"
+            and getattr(settings, "ALLOW_INSECURE_JENKINS", False)
+        )
+    ):
         raise PipelineUnavailable("Jenkins must be configured with an HTTPS URL.")
+    if not parsed_url.hostname or parsed_url.username or parsed_url.password:
+        raise PipelineUnavailable("Jenkins URL is invalid.")
 
     job_path = "/".join(
         f"job/{quote(segment, safe='')}"

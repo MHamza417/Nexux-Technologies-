@@ -267,10 +267,13 @@ SCAN_WORKER_ISOLATED = os.getenv(
     "SCAN_WORKER_ISOLATED", "false"
 ).strip().lower() in {"1", "true", "yes"}
 JENKINS_URL = os.getenv("JENKINS_URL", "").rstrip("/")
+ALLOW_INSECURE_JENKINS = os.getenv("ALLOW_INSECURE_JENKINS", "false").lower() == "true"
 JENKINS_SCAN_JOB = os.getenv("JENKINS_SCAN_JOB", "")
 JENKINS_USER = os.getenv("JENKINS_USER", "")
 JENKINS_API_TOKEN = os.getenv("JENKINS_API_TOKEN", "")
 SCAN_PIPELINE_TOKEN = os.getenv("SCAN_PIPELINE_TOKEN", "")
+SONAR_URL = os.getenv("SONAR_URL", "").rstrip("/")
+SONAR_TOKEN = os.getenv("SONAR_TOKEN", "")
 MAX_SCAN_REPORT_BYTES = int(os.getenv("MAX_SCAN_REPORT_BYTES", str(20 * 1024 * 1024)))
 FRONTEND_BASE_URL = os.getenv("FRONTEND_BASE_URL", "http://localhost:3000").rstrip("/")
 SCAN_GATE_FAIL_SEVERITY = os.getenv(
