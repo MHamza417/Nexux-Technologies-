@@ -135,6 +135,13 @@ export async function loadReport(scanId) {
   return apiRequest(`/scans/${encodeURIComponent(scanId)}/report/`);
 }
 
+export async function loadWazuhVulnerabilities(agent = "default") {
+  const query = agent && agent !== "default"
+    ? `?agent=${encodeURIComponent(agent)}`
+    : "";
+  return apiRequest(`/wazuh/vulnerabilities/${query}`);
+}
+
 export function readPublicScans() {
   try {
     const parsed = JSON.parse(localStorage.getItem(PUBLIC_SCANS_KEY) || "[]");

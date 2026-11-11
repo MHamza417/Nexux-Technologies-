@@ -464,6 +464,7 @@
   font-size: 0.84rem;
   font-weight: 800;
   cursor: pointer;
+  text-decoration: none;
 }
 
 .scanner-report-link:hover:not(:disabled) {

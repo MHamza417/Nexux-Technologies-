@@ -11,8 +11,20 @@ import Team from "./components/Team/Team";
 import Testimonials from "./components/Testimonials/Testimonials";
 import Contact from "./components/Contact/Contact";
 import Footer from "./components/Footer/Footer";
+import Vulnerabilities from "./components/Vulnerabilities/Vulnerabilities";
 
 function App() {
+  const vulnerabilityRoute = window.location.pathname.match(/^\/vulnerabilities\/([^/]+)\/?$/);
+  if (vulnerabilityRoute) {
+    let agent = vulnerabilityRoute[1];
+    try {
+      agent = decodeURIComponent(agent);
+    } catch {
+      agent = "default";
+    }
+    return <Vulnerabilities agent={agent} />;
+  }
+
   return (
     <div className="cyber-app-container">
       <Navbar />

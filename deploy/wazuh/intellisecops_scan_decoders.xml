@@ -1,0 +1,4 @@
+<decoder name="intellisecops_scan_event">
+  <prematch type="pcre2">^\{"event":"scan_(completed|failed|blocked)"</prematch>
+  <plugin_decoder>JSON_Decoder</plugin_decoder>
+</decoder>

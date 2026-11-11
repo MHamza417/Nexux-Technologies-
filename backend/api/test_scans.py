@@ -1,3 +1,6 @@
+import json
+import logging
+from logging.handlers import RotatingFileHandler
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -8,7 +11,7 @@ from rest_framework.test import APIClient
 from . import scan_security
 from .models import ScanJob, VulnerabilityReport
 from .scan_pipeline import PipelineUnavailable, trigger_scan_pipeline
-from .scan_views import _finding_values
+from .scan_views import _finding_values, _log_scan_lifecycle
 
 
 class TargetValidationTests(TestCase):
@@ -86,6 +89,71 @@ class ScanApiTests(TestCase):
     def authenticated_as(self, user=None):
         self.client.force_authenticate(user=user or self.owner)
 
+    def test_scan_event_is_safe_single_line_json_with_severity_counts(self):
+        scan = SimpleNamespace(
+            id="scan-id",
+            status=ScanJob.Status.COMPLETED,
+            target=(
+                "https://user:do-not-log@example.com/account"
+                "?access_token=do-not-log&view=summary"
+            ),
+            report=SimpleNamespace(
+                vulnerability_counts={
+                    "critical": 1,
+                    "high": 2,
+                    "medium": 3,
+                    "low": 4,
+                }
+            ),
+        )
+        with self.assertLogs("security.scan_events", level="INFO") as captured:
+            _log_scan_lifecycle(scan)
+
+        self.assertEqual(len(captured.records), 1)
+        event = json.loads(captured.records[0].getMessage())
+        self.assertEqual(event, {
+            "event": "scan_completed",
+            "scan_id": "scan-id",
+            "target": "https://example.com/account",
+            "critical": 1,
+            "high": 2,
+            "medium": 3,
+            "low": 4,
+            "status": "completed",
+        })
+        self.assertNotIn("do-not-log", captured.records[0].getMessage())
+
+    def test_failed_and_blocked_scan_events_are_logged_with_zero_findings(self):
+        for scan_status, event_name in (
+            (ScanJob.Status.FAILED, "scan_failed"),
+            (ScanJob.Status.BLOCKED, "scan_blocked"),
+        ):
+            scan = SimpleNamespace(
+                id="scan-id",
+                status=scan_status,
+                target="https://example.com/",
+            )
+            with self.subTest(status=scan_status), self.assertLogs(
+                "security.scan_events", level="INFO"
+            ) as captured:
+                _log_scan_lifecycle(scan)
+
+            event = json.loads(captured.records[0].getMessage())
+            self.assertEqual(event["event"], event_name)
+            self.assertEqual(event["status"], scan_status)
+            self.assertEqual(
+                [event[key] for key in ("critical", "high", "medium", "low")],
+                [0, 0, 0, 0],
+            )
+
+    def test_scan_event_logging_uses_rotating_file_handler(self):
+        handlers = logging.getLogger("security.scan_events").handlers
+        self.assertTrue(any(
+            isinstance(handler, RotatingFileHandler)
+            and handler.baseFilename.endswith("security_events.log")
+            for handler in handlers
+        ))
+
     @patch("api.scan_views.trigger_scan_pipeline")
     @patch("api.scan_views.validate_redirect_chain", return_value="https://example.com/")
     def test_submission_requires_auth_and_authorization(
@@ -150,23 +218,28 @@ class ScanApiTests(TestCase):
 
         from .scan_pipeline import PipelineUnavailable
 
-        with patch(
-            "api.scan_views.trigger_scan_pipeline",
-            side_effect=PipelineUnavailable("Jenkins unavailable"),
-        ):
-            response = self.client.post(
-                "/api/scans/",
-                {
-                    "target_type": "website",
-                    "target": "https://example.com",
-                    "authorized": True,
-                },
-                format="json",
-            )
+        with self.assertLogs("security.scan_events", level="INFO") as captured:
+            with patch(
+                "api.scan_views.trigger_scan_pipeline",
+                side_effect=PipelineUnavailable("Jenkins unavailable"),
+            ):
+                response = self.client.post(
+                    "/api/scans/",
+                    {
+                        "target_type": "website",
+                        "target": "https://example.com",
+                        "authorized": True,
+                    },
+                    format="json",
+                )
         self.assertEqual(response.status_code, 503)
         scan = ScanJob.objects.get()
         self.assertEqual(scan.status, ScanJob.Status.BLOCKED)
         self.assertEqual(scan.failure_reason, "Jenkins unavailable")
+        self.assertEqual(
+            json.loads(captured.records[0].getMessage())["event"],
+            "scan_blocked",
+        )
 
     @override_settings(SCAN_PIPELINE_TOKEN="pipeline-secret")
     @patch("api.scan_views.send_security_report", return_value=False)
@@ -196,19 +269,24 @@ class ScanApiTests(TestCase):
                 }],
             }],
         }
-        response = self.client.post(
-            f"/api/scans/{scan.id}/pipeline-result/",
-            {
-                "status": "completed",
-                "target_type": scan.target_type,
-                "target": scan.target,
-                "scan_type": "ZAP",
-                "report": zap_report,
-            },
-            format="json",
-            HTTP_X_SCAN_PIPELINE_TOKEN="pipeline-secret",
-        )
+        with self.assertLogs("security.scan_events", level="INFO") as captured:
+            response = self.client.post(
+                f"/api/scans/{scan.id}/pipeline-result/",
+                {
+                    "status": "completed",
+                    "target_type": scan.target_type,
+                    "target": scan.target,
+                    "scan_type": "ZAP",
+                    "report": zap_report,
+                },
+                format="json",
+                HTTP_X_SCAN_PIPELINE_TOKEN="pipeline-secret",
+            )
         self.assertEqual(response.status_code, 200)
+        completed_event = json.loads(captured.records[0].getMessage())
+        self.assertEqual(completed_event["event"], "scan_completed")
+        self.assertEqual(completed_event["high"], 1)
+        self.assertNotIn("pipeline-secret", captured.records[0].getMessage())
         scan.refresh_from_db()
         self.assertEqual(scan.status, ScanJob.Status.COMPLETED)
         self.assertEqual(scan.findings.count(), 1)
@@ -283,18 +361,23 @@ class ScanApiTests(TestCase):
             target="https://github.com/owner/repo.git",
             authorized=True,
         )
-        response = self.client.post(
-            f"/api/scans/{scan.id}/pipeline-result/",
-            {
-                "status": "failed",
-                "error": "Repository issue export is not configured.",
-                "target_type": scan.target_type,
-                "target": scan.target,
-            },
-            format="json",
-            HTTP_X_SCAN_PIPELINE_TOKEN="pipeline-secret",
-        )
+        with self.assertLogs("security.scan_events", level="INFO") as captured:
+            response = self.client.post(
+                f"/api/scans/{scan.id}/pipeline-result/",
+                {
+                    "status": "failed",
+                    "error": "Repository issue export is not configured.",
+                    "target_type": scan.target_type,
+                    "target": scan.target,
+                },
+                format="json",
+                HTTP_X_SCAN_PIPELINE_TOKEN="pipeline-secret",
+            )
         self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            json.loads(captured.records[0].getMessage())["event"],
+            "scan_failed",
+        )
         scan.refresh_from_db()
         self.assertEqual(scan.status, ScanJob.Status.FAILED)
         self.assertEqual(scan.findings.count(), 0)

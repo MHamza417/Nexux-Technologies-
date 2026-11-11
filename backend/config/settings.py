@@ -274,6 +274,17 @@ JENKINS_API_TOKEN = os.getenv("JENKINS_API_TOKEN", "")
 SCAN_PIPELINE_TOKEN = os.getenv("SCAN_PIPELINE_TOKEN", "")
 SONAR_URL = os.getenv("SONAR_URL", "").rstrip("/")
 SONAR_TOKEN = os.getenv("SONAR_TOKEN", "")
+WAZUH_API_URL = os.getenv("WAZUH_API_URL", "").rstrip("/")
+WAZUH_API_USER = os.getenv("WAZUH_API_USER", "")
+WAZUH_API_PASSWORD = os.getenv("WAZUH_API_PASSWORD", "")
+WAZUH_INDEXER_URL = os.getenv("WAZUH_INDEXER_URL", "").rstrip("/")
+WAZUH_INDEXER_USER = os.getenv("WAZUH_INDEXER_USER", "")
+WAZUH_INDEXER_PASSWORD = os.getenv("WAZUH_INDEXER_PASSWORD", "")
+WAZUH_VERIFY_TLS = os.getenv("WAZUH_VERIFY_TLS", "true").strip().lower() in {
+    "1", "true", "yes",
+}
+WAZUH_AGENT_ID = os.getenv("WAZUH_AGENT_ID", "").strip()
+WAZUH_AGENT_NAME = os.getenv("WAZUH_AGENT_NAME", "Docker").strip()
 MAX_SCAN_REPORT_BYTES = int(os.getenv("MAX_SCAN_REPORT_BYTES", str(20 * 1024 * 1024)))
 FRONTEND_BASE_URL = os.getenv("FRONTEND_BASE_URL", "http://localhost:3000").rstrip("/")
 SCAN_GATE_FAIL_SEVERITY = os.getenv(
@@ -369,6 +380,14 @@ LOGGING = {
             'backupCount': 5,
             'formatter': 'raw_json',
         },
+        'scan_events_json_file': {
+            'level': 'INFO',
+            'class': 'logging.handlers.RotatingFileHandler',
+            'filename': str(LOGS_DIR / 'security_events.log'),
+            'maxBytes': 10 * 1024 * 1024,
+            'backupCount': 5,
+            'formatter': 'raw_json',
+        },
     },
     'loggers': {
         'django': {
@@ -383,6 +402,11 @@ LOGGING = {
         },
         'security.audit': {
             'handlers': ['console', 'audit_json_file'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+        'security.scan_events': {
+            'handlers': ['scan_events_json_file'],
             'level': 'INFO',
             'propagate': False,
         },

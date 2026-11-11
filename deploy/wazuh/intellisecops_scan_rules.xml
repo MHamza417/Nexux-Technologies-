@@ -1,0 +1,36 @@
+<group name="intellisecops,scan_events,">
+  <rule id="100500" level="3">
+    <decoded_as>intellisecops_scan_event</decoded_as>
+    <description>IntelliSecOps scan lifecycle event: $(event) for $(scan_id)</description>
+    <group>intellisecops,scan_event,</group>
+  </rule>
+
+  <rule id="100501" level="12">
+    <if_sid>100500</if_sid>
+    <field name="critical" type="pcre2">^[1-9][0-9]*$</field>
+    <description>IntelliSecOps critical findings in scan $(scan_id) ($(critical) critical, $(high) high)</description>
+    <group>intellisecops,scan_event,critical_finding,</group>
+  </rule>
+
+  <rule id="100502" level="10">
+    <if_sid>100500</if_sid>
+    <field name="critical" type="pcre2">^0$</field>
+    <field name="high" type="pcre2">^[1-9][0-9]*$</field>
+    <description>IntelliSecOps high findings in scan $(scan_id) ($(high) high)</description>
+    <group>intellisecops,scan_event,high_finding,</group>
+  </rule>
+
+  <rule id="100503" level="7">
+    <if_sid>100500</if_sid>
+    <field name="event">scan_failed</field>
+    <description>IntelliSecOps scan failed: $(scan_id)</description>
+    <group>intellisecops,scan_event,scan_failure,</group>
+  </rule>
+
+  <rule id="100504" level="7">
+    <if_sid>100500</if_sid>
+    <field name="event">scan_blocked</field>
+    <description>IntelliSecOps scan blocked: $(scan_id)</description>
+    <group>intellisecops,scan_event,scan_failure,</group>
+  </rule>
+</group>

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { FaArrowRight, FaCheckCircle, FaClock, FaGithub, FaGlobe, FaLock, FaShieldAlt, FaSpinner, FaTimes } from "react-icons/fa";
+import { FaArrowRight, FaBug, FaCheckCircle, FaClock, FaGithub, FaGlobe, FaLock, FaShieldAlt, FaSpinner, FaTimes } from "react-icons/fa";
 import {
   downloadPublicReport,
   loadPublicScan,
@@ -293,6 +293,12 @@ function SecurityScanner() {
                     {downloading ? <FaSpinner className="scanner-spin" /> : <FaArrowRight />}
                     {downloading ? "Preparing report" : "Download scan report"}
                   </button>
+                  <a
+                    className="scanner-report-link"
+                    href="/vulnerabilities/default"
+                  >
+                    <FaBug /> View Vulnerabilities
+                  </a>
                 </>
               ) : null}
             </div>

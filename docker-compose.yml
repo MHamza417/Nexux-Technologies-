@@ -5,6 +5,7 @@ services:
     restart: unless-stopped
     env_file:
       - ./backend/.env
+    # Wazuh URLs, credentials, TLS setting, and agent selector are loaded from this env_file.
     environment:
       DATABASE_PATH: /data/db.sqlite3
       DJANGO_DEBUG: "false"

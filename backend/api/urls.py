@@ -24,6 +24,7 @@ from .views import (
     custom_security_search,
 )
 from .health_views import integrations_health
+from .wazuh_views import wazuh_vulnerabilities
 
 urlpatterns = [
     path('', home, name='home'),
@@ -34,6 +35,11 @@ urlpatterns = [
 
     # DevSecOps & Scan Analysis
     path('integrations/health/', integrations_health, name='integrations-health'),
+    path(
+        'wazuh/vulnerabilities/',
+        wazuh_vulnerabilities,
+        name='wazuh-vulnerabilities',
+    ),
     path('scans/', scan_submit, name='scan-submit'),
     path('public/scans/', public_scan_submit, name='public-scan-submit'),
     path('public/scans/<uuid:scan_id>/', public_scan_detail, name='public-scan-detail'),

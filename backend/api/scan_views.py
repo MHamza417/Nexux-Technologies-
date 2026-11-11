@@ -1,7 +1,9 @@
 import hmac
 import json
+import logging
 import secrets
 from datetime import timedelta
+from urllib.parse import urlsplit, urlunsplit
 
 from django.conf import settings
 from django.db import transaction
@@ -28,6 +30,46 @@ from .scan_security import (
 
 class ScanStateConflict(RuntimeError):
     pass
+
+
+scan_events_logger = logging.getLogger("security.scan_events")
+
+
+def _log_scan_lifecycle(scan):
+    status_event = {
+        ScanJob.Status.COMPLETED: "scan_completed",
+        ScanJob.Status.FAILED: "scan_failed",
+        ScanJob.Status.BLOCKED: "scan_blocked",
+    }.get(scan.status)
+    if status_event is None:
+        return
+
+    try:
+        parsed_target = urlsplit(scan.target)
+        hostname = parsed_target.hostname or ""
+        if ":" in hostname and not hostname.startswith("["):
+            hostname = f"[{hostname}]"
+        if parsed_target.port:
+            hostname = f"{hostname}:{parsed_target.port}"
+        safe_target = urlunsplit(
+            (parsed_target.scheme, hostname, parsed_target.path, "", "")
+        )
+    except ValueError:
+        safe_target = ""
+
+    report = getattr(scan, "report", None)
+    counts = report.vulnerability_counts if report else {}
+    event = {
+        "event": status_event,
+        "scan_id": str(scan.id),
+        "target": safe_target,
+        "critical": counts.get("critical", 0),
+        "high": counts.get("high", 0),
+        "medium": counts.get("medium", 0),
+        "low": counts.get("low", 0),
+        "status": scan.status,
+    }
+    scan_events_logger.info(json.dumps(event, separators=(",", ":"), ensure_ascii=True))
 
 
 class ScanSubmissionThrottle(ScopedRateThrottle):
@@ -193,6 +235,7 @@ def scan_submit(request):
         scan.failure_reason = str(exc)
         scan.completed_at = django_timezone.now()
         scan.save(update_fields=["status", "failure_reason", "completed_at"])
+        _log_scan_lifecycle(scan)
         send_security_report(scan, [], failed=True)
         return Response(
             {"scan": _scan_payload(scan), "detail": str(exc)},
@@ -399,6 +442,7 @@ def _save_completed_scan(scan, scan_type, raw_report):
         scan.verified_contact = discover_security_contact(scan.target) or ""
         scan.save(update_fields=["verified_contact"])
     send_security_report(scan, list(scan.findings.all()))
+    _log_scan_lifecycle(scan)
     return scan
 
 
@@ -411,6 +455,8 @@ def _mark_failed(scan_id, reason):
         scan.failure_reason = reason[:2000]
         scan.completed_at = django_timezone.now()
         scan.save(update_fields=["status", "failure_reason", "completed_at"])
+    scan.refresh_from_db()
+    _log_scan_lifecycle(scan)
     return True
 
 
@@ -564,6 +610,7 @@ def _queue_validated_scan(owner, target_type, target, include_ai, access_token="
         scan.failure_reason = str(exc)
         scan.completed_at = django_timezone.now()
         scan.save(update_fields=["status", "failure_reason", "completed_at"])
+        _log_scan_lifecycle(scan)
         send_security_report(scan, [], failed=True)
         body = {"scan": _scan_payload(scan), "detail": str(exc)}
         if access_token:

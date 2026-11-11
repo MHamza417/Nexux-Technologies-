@@ -55,6 +55,20 @@ A missing or wrong token returns `404`. Completed public scans are still written
 - `GET /api/scans/history/` — current user's scans, optional `limit` 1–100
 - `GET /api/scans/<scan-id>/` — current user's status and normalized findings
 - `GET /api/scans/<scan-id>/report/` — current user's completed report
+- `GET /api/wazuh/vulnerabilities/?agent=<name-or-id>` — authenticated Wazuh
+  Vulnerability Detection results for an agent. The `agent` query is optional;
+  `WAZUH_AGENT_ID` or `WAZUH_AGENT_NAME` from `backend/.env` selects the default.
+  The endpoint resolves agent names with the Wazuh API and queries
+  `wazuh-states-vulnerabilities-*` in the Indexer. Responses are cached for
+  60 seconds; each upstream request has a 10-second timeout.
+
+Configure `WAZUH_API_URL`, `WAZUH_API_USER`, `WAZUH_API_PASSWORD`,
+`WAZUH_INDEXER_URL`, `WAZUH_INDEXER_USER`, and `WAZUH_INDEXER_PASSWORD` in
+`backend/.env`. Set `WAZUH_VERIFY_TLS=false` only when connecting to a trusted
+development Wazuh service with a self-signed certificate; enable certificate
+verification in production. Never put real credentials in `.env.example`.
+The `/vulnerabilities/:agent` frontend view requires a Django JWT session, just
+like the API endpoint.
 
 Submission returns `202` after Jenkins accepts the job. The scan stays pending
 until Jenkins posts a status callback. Missing pipeline configuration or an
@@ -211,8 +225,18 @@ docker compose ps
 docker compose logs --tail 100 wazuh-agent
 ```
 
-The Agent reads `scan_metrics.json.log` and `security_audit.json.log` from the
-same persistent Docker volume mounted by the backend. For a local Compose
+The Agent reads `scan_metrics.json.log`, `security_audit.json.log`, and
+`security_events.log` from the same persistent Docker volume mounted by the
+backend. The lifecycle event file rotates at 10 MiB and retains five backups.
+The custom decoder and rules in `deploy/wazuh/intellisecops_scan_decoders.xml`
+and `deploy/wazuh/intellisecops_scan_rules.xml` must be installed on the
+Wazuh Manager (the agent cannot load manager rules). Copy them to
+`/var/ossec/etc/decoders/` and `/var/ossec/etc/rules/`, respectively, then test
+with `/var/ossec/bin/wazuh-logtest` and restart `wazuh-manager`. Critical
+findings trigger level 12 alerts and high findings trigger level 10 alerts;
+failed/blocked scans trigger level 7.
+
+For a local Compose
 deployment on EC2, set
 `INTELLISECOPS_LOG_DIR=/var/log/intellisecops` in the Compose environment and
 ensure the directory is writable by the backend and readable by the Agent.
