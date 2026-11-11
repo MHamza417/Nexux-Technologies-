@@ -247,6 +247,7 @@ pipeline {
                         -t "$TARGET_URL" \
                         -r report.html \
                         -J report.json || true
+                    chown -R $(id -u):$(id -g) zap-reports
 
                     echo "ZAP scan completed."
 
