@@ -240,13 +240,14 @@ pipeline {
                     echo "Starting OWASP ZAP scan..."
 
                     docker run --rm \
-                        -u $(id -u):$(id -g) \
+                        -u root \
                         -v "$(pwd)/zap-reports:/zap/wrk" \
                         ghcr.io/zaproxy/zaproxy:stable \
                         zap-baseline.py \
                         -t "$TARGET_URL" \
                         -r report.html \
                         -J report.json || true
+                    docker run --rm -u root -v "$PWD/zap-reports:/zap/wrk" --entrypoint chown ghcr.io/zaproxy/zaproxy:stable -R $(id -u):$(id -g) /zap/wrk
                     echo "ZAP scan completed."
 
                     ls -lah zap-reports
