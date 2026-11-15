@@ -701,6 +701,19 @@
   font-weight: 800;
 }
 
+.report-ai-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.report-ai-actions .report-secondary-button {
+  min-height: 2.35rem;
+  padding: 0.5rem 0.65rem;
+}
+
 .report-ai-disclaimer {
   margin: 0.7rem 0 1rem;
   color: #6e7f93;

@@ -127,9 +127,6 @@ function SecurityScanner() {
     });
     setScanAccess(access);
     setScan(scanData);
-    if (scanData.status === "completed") {
-      window.location.replace(`/reports/?scan_id=${encodeURIComponent(scanData.scan_id)}`);
-    }
   }
 
   async function handleDownloadReport() {
@@ -293,8 +290,10 @@ function SecurityScanner() {
                   ) : null}
                   {scan.ai_analysis ? (
                     <div className="scanner-ai-note">
-                      <strong>Gemini analysis · unverified</strong>
-                      <p>{scan.ai_analysis.replace(/^AI-generated suggestion \(unverified\):\s*/i, "")}</p>
+                      <strong>{scan.ai_generated ? "Gemini analysis · unverified" : "Gemini analysis unavailable"}</strong>
+                      <p>{scan.ai_generated
+                        ? scan.ai_analysis.replace(/^AI-generated suggestion \(unverified\):\s*/i, "")
+                        : scan.ai_analysis}</p>
                     </div>
                   ) : null}
                   <button
@@ -308,9 +307,9 @@ function SecurityScanner() {
                   </button>
                   <a
                     className="scanner-report-link"
-                    href="/vulnerabilities/default"
+                    href={`/reports/?scan_id=${encodeURIComponent(scan.scan_id)}`}
                   >
-                    <FaBug /> View Vulnerabilities
+                    <FaBug /> View all {findings.length} scan findings
                   </a>
                 </>
               ) : null}

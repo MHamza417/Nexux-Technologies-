@@ -57,8 +57,14 @@ function scopeLabel(report) {
   return `${report.scan_type || "Scanner"} · scope not specified`;
 }
 
-function saveJson(report) {
-  const blob = new Blob([JSON.stringify(report.raw_report, null, 2)], {
+function saveJson(report, messages) {
+  const exportReport = {
+    ...report,
+    ai_assistant_responses: messages
+      .filter((message) => message.role === "assistant")
+      .map((message) => ({ answer: message.text, ai_generated: message.aiGenerated })),
+  };
+  const blob = new Blob([JSON.stringify(exportReport, null, 2)], {
     type: "application/json",
   });
   const url = URL.createObjectURL(blob);
@@ -336,6 +342,33 @@ function ReportDashboard() {
     }
   }
 
+  async function generateFixSuggestions() {
+    if (!report || asking) return;
+    setAssistantError("");
+    setAsking(true);
+    try {
+      const result = await askScanAssistant(
+        report.scan_id,
+        "For each stored finding, explain the risk briefly and give prioritized, actionable remediation steps plus safe verification steps. Use only the supplied report, do not invent evidence or code context, and state when more code context is needed.",
+        undefined,
+        accessToken,
+      );
+      setMessages((previous) => [...previous, {
+        role: "assistant",
+        text: result.answer,
+        aiGenerated: result.ai_generated,
+      }]);
+      document.getElementById("report-ai-chat")?.scrollIntoView({
+        behavior: "smooth",
+        block: "center",
+      });
+    } catch (error) {
+      setAssistantError(error.message || "Gemini could not generate suggestions. Check the server-side API key, quota, and connectivity.");
+    } finally {
+      setAsking(false);
+    }
+  }
+
   async function handlePdfDownload() {
     setPdfError("");
     setPdfGenerating(true);
@@ -355,6 +388,7 @@ function ReportDashboard() {
   const hasSavedAnalysis = Boolean(
     savedAnalysis && !savedAnalysis.toLowerCase().startsWith("ai analysis unavailable"),
   );
+  const hasGeneratedAnswer = messages.some((message) => message.role === "assistant");
 
   return (
     <main className="report-page">
@@ -412,7 +446,7 @@ function ReportDashboard() {
                 <p className="report-scope">{scopeLabel(report)}</p>
               </div>
               <div className="report-actions">
-                <button className="report-secondary-button" type="button" onClick={() => saveJson(report)}>
+                <button className="report-secondary-button" type="button" onClick={() => saveJson(report, messages)}>
                   <FaDownload /> Download JSON
                 </button>
                 <button className="report-primary-button" type="button" onClick={handlePdfDownload} disabled={pdfGenerating}>
@@ -569,9 +603,23 @@ function ReportDashboard() {
             <section className="report-panel report-ai-panel">
               <div className="report-panel-heading">
                 <div><p className="report-eyebrow">AI SECURITY AGENT</p><h2><FaRobot /> Explanations & follow-up questions</h2></div>
-                <span className="report-ai-label">AI-generated · unverified</span>
+                <div className="report-ai-actions">
+                  <span className="report-ai-label">
+                    {hasSavedAnalysis || hasGeneratedAnswer
+                      ? "AI-generated · unverified"
+                      : "Gemini suggestions on request"}
+                  </span>
+                  <button
+                    className="report-secondary-button"
+                    type="button"
+                    onClick={generateFixSuggestions}
+                    disabled={asking}
+                  >
+                    <FaRobot /> {asking ? "Generating suggestions…" : "Generate Gemini fix suggestions"}
+                  </button>
+                </div>
               </div>
-              <p className="report-ai-disclaimer">AI guidance is separate from scanner findings. Verify recommendations against your code and environment; the agent must not invent evidence.</p>
+              <p className="report-ai-disclaimer">AI guidance is separate from scanner findings. Each request uses up to 30 stored findings. Verify recommendations against your code and environment; the agent must not invent evidence.</p>
 
               {hasSavedAnalysis ? (
                 <article className="report-ai-summary">
@@ -593,7 +641,7 @@ function ReportDashboard() {
                 <span>{speechState === "playing" ? "Playing" : speechState === "paused" ? "Paused" : "Voice ready"}</span>
               </div>
 
-              <div className="report-chat" aria-live="polite">
+              <div className="report-chat" id="report-ai-chat" aria-live="polite">
                 {messages.map((message, index) => (
                   <article className={`report-chat-message ${message.role}`} key={`${message.role}-${index}`}>
                     <strong>{message.role === "assistant" ? "Gemini · AI-generated" : "You"}</strong>
