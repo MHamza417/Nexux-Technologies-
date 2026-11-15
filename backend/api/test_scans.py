@@ -487,7 +487,7 @@ class ScanApiTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.data["ai_generated"])
-        self.assertEqual(response.data["model"], "gemini-3.8-flash")
+        self.assertEqual(response.data["model"], "gemini-3.5-flash")
         self.assertIn("verify", response.data["answer"])
         prompt = client.models.generate_content.call_args.kwargs["contents"]
         self.assertIn("Missing CSP", prompt)
@@ -495,7 +495,7 @@ class ScanApiTests(TestCase):
         self.assertIn("How do I fix this?", prompt)
         self.assertEqual(
             client.models.generate_content.call_args.kwargs["model"],
-            "gemini-3.8-flash",
+            "gemini-3.5-flash",
         )
 
     def test_ai_assistant_requires_report_access_and_valid_question(self):

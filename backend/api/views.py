@@ -132,7 +132,8 @@ def get_gemini_client():
 
 
 def generate_gemini_content(prompt):
-    return get_gemini_client().models.generate_content(
+    client = get_gemini_client()
+    return client.models.generate_content(
         model=settings.GEMINI_MODEL,
         contents=prompt,
     )
