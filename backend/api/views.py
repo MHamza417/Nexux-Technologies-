@@ -3,6 +3,7 @@ import json
 import logging
 from datetime import datetime, timezone
 from google import genai
+from google.genai import types
 
 from decouple import config
 from django.db.models import Q
@@ -127,7 +128,13 @@ def get_gemini_client():
     if not api_key:
         raise RuntimeError("GEMINI_API_KEY is missing.")
 
-    client = genai.Client(api_key=api_key)
+    client = genai.Client(
+        api_key=api_key,
+        http_options=types.HttpOptions(
+            timeout=40000,
+            retry_options=types.HttpRetryOptions(attempts=1),
+        ),
+    )
     return client
 
 
