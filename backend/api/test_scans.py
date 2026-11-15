@@ -89,6 +89,33 @@ class ScanApiTests(TestCase):
     def authenticated_as(self, user=None):
         self.client.force_authenticate(user=user or self.owner)
 
+    def test_gemini_generation_uses_configured_model(self):
+        from .views import generate_gemini_content
+
+        client = MagicMock()
+        client.models.generate_content.return_value = SimpleNamespace(text="Analysis")
+        with (
+            override_settings(GEMINI_MODEL="gemini-test-model"),
+            patch("api.views.get_gemini_client", return_value=client),
+        ):
+            response = generate_gemini_content("Explain the stored finding.")
+
+        self.assertEqual(response.text, "Analysis")
+        client.models.generate_content.assert_called_once_with(
+            model="gemini-test-model",
+            contents="Explain the stored finding.",
+        )
+
+    def test_gemini_quota_error_is_explained_without_exposing_exception_text(self):
+        from .views import gemini_unavailable_message
+
+        error = RuntimeError("private upstream error")
+        error.code = 429
+        message = gemini_unavailable_message(error)
+
+        self.assertIn("quota", message)
+        self.assertNotIn("private upstream error", message)
+
     def test_scan_event_is_safe_single_line_json_with_severity_counts(self):
         scan = SimpleNamespace(
             id="scan-id",
@@ -460,12 +487,16 @@ class ScanApiTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.data["ai_generated"])
-        self.assertEqual(response.data["model"], "gemini-2.0-flash")
+        self.assertEqual(response.data["model"], "gemini-3.8-flash")
         self.assertIn("verify", response.data["answer"])
         prompt = client.models.generate_content.call_args.kwargs["contents"]
         self.assertIn("Missing CSP", prompt)
         self.assertIn("header absent", prompt)
         self.assertIn("How do I fix this?", prompt)
+        self.assertEqual(
+            client.models.generate_content.call_args.kwargs["model"],
+            "gemini-3.8-flash",
+        )
 
     def test_ai_assistant_requires_report_access_and_valid_question(self):
         scan = ScanJob.objects.create(

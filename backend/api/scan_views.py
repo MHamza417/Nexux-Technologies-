@@ -454,13 +454,9 @@ def scan_ai_assistant(request, scan_id):
         f"Developer question: {json.dumps(question, ensure_ascii=True)}"
     )
     try:
-        from .views import get_gemini_client
+        from .views import generate_gemini_content, gemini_unavailable_message
 
-        client = get_gemini_client()
-        response = client.models.generate_content(
-            model="gemini-2.0-flash",
-            contents=prompt,
-        )
+        response = generate_gemini_content(prompt)
         answer = (response.text or "").strip()
         if not answer:
             return Response(
@@ -469,19 +465,27 @@ def scan_ai_assistant(request, scan_id):
             )
     except Exception as exc:
         scan_events_logger.warning(
-            "Gemini report assistant unavailable (%s).", type(exc).__name__
+            "Gemini report assistant unavailable (model=%s, error=%s, status=%s).",
+            settings.GEMINI_MODEL,
+            type(exc).__name__,
+            getattr(exc, "code", "unknown"),
         )
         return Response(
             {
                 "detail": (
-                    "AI assistance is unavailable. Check the server-side Gemini "
-                    "configuration and connectivity; the stored scan report is unchanged."
+                    f"AI assistance is unavailable: "
+                    f"{gemini_unavailable_message(exc)} "
+                    "The stored scan report is unchanged."
                 )
             },
             status=status.HTTP_503_SERVICE_UNAVAILABLE,
         )
 
-    return Response({"answer": answer, "ai_generated": True, "model": "gemini-2.0-flash"})
+    return Response({
+        "answer": answer,
+        "ai_generated": True,
+        "model": settings.GEMINI_MODEL,
+    })
 
 
 def _save_completed_scan(scan, scan_type, raw_report):

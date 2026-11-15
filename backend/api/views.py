@@ -131,26 +131,42 @@ def get_gemini_client():
     return client
 
 
+def generate_gemini_content(prompt):
+    return get_gemini_client().models.generate_content(
+        model=settings.GEMINI_MODEL,
+        contents=prompt,
+    )
+
+
+def gemini_unavailable_message(error):
+    code = getattr(error, "code", None)
+    if code == 429:
+        return "Gemini quota or rate limit reached. Check the API project's quota and billing."
+    if code in {401, 403}:
+        return "Gemini rejected the API key or project access. Check GEMINI_API_KEY and API access."
+    if code == 404:
+        return "The configured Gemini model was not found. Check GEMINI_MODEL."
+    if code:
+        return f"Gemini request failed with HTTP {code}. Check the server logs for details."
+    return "Gemini is unavailable due to a network or server error. Check the server logs."
+
+
 def ask_gemini(prompt):
     """
     Shared helper: sends a prompt to Gemini and safely returns text,
     falling back to a placeholder if the API fails or quota is hit.
     """
     try:
-        client = get_gemini_client()
-        response = client.models.generate_content(
-            model="gemini-2.0-flash",
-            contents=prompt,
-        )
+        response = generate_gemini_content(prompt)
         return response.text or "Analysis generated placeholder."
     except Exception as ai_err:
         scan_logger.warning(
-            "Gemini analysis unavailable (%s).", type(ai_err).__name__
+            "Gemini analysis unavailable (model=%s, error=%s, status=%s).",
+            settings.GEMINI_MODEL,
+            type(ai_err).__name__,
+            getattr(ai_err, "code", "unknown"),
         )
-        return (
-            "AI Analysis unavailable due to API quota limits or network issue. "
-            "Please check the raw JSON report data for complete vulnerability details."
-        )
+        return f"AI Analysis unavailable: {gemini_unavailable_message(ai_err)}"
 
 
 def log_scan_event(scan_type, project_name, report_id, summary_metrics, raw_data):
