@@ -53,6 +53,11 @@ function Navbar() {
             </a>
           </li>
           <li>
+            <a href="/reports/" onClick={() => setMobileMenuOpen(false)}>
+              Reports
+            </a>
+          </li>
+          <li>
             <a href="#projects" onClick={() => setMobileMenuOpen(false)}>
               Projects
             </a>

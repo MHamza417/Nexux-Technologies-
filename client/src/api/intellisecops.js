@@ -135,6 +135,16 @@ export async function loadReport(scanId) {
   return apiRequest(`/scans/${encodeURIComponent(scanId)}/report/`);
 }
 
+export async function askScanAssistant(scanId, question, findingIndex, accessToken = "") {
+  return apiRequest(`/scans/${encodeURIComponent(scanId)}/ai-assistant/`, {
+    method: "POST",
+    auth: !accessToken,
+    retryAuth: false,
+    headers: accessToken ? publicHeaders(accessToken) : {},
+    body: JSON.stringify({ question, finding_index: findingIndex }),
+  });
+}
+
 export async function loadWazuhVulnerabilities(agent = "default") {
   const query = agent && agent !== "default"
     ? `?agent=${encodeURIComponent(agent)}`

@@ -255,6 +255,7 @@ REST_FRAMEWORK = {
     "DEFAULT_THROTTLE_RATES": {
         "scan_submission": os.getenv("SCAN_SUBMISSION_RATE", "5/hour"),
         "public_scan_submission": os.getenv("PUBLIC_SCAN_SUBMISSION_RATE", "20/hour"),
+        "scan_ai_assistant": os.getenv("SCAN_AI_ASSISTANT_RATE", "10/hour"),
     },
 }
 

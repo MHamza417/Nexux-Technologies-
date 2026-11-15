@@ -55,6 +55,12 @@ A missing or wrong token returns `404`. Completed public scans are still written
 - `GET /api/scans/history/` — current user's scans, optional `limit` 1–100
 - `GET /api/scans/<scan-id>/` — current user's status and normalized findings
 - `GET /api/scans/<scan-id>/report/` — current user's completed report
+- `POST /api/scans/<scan-id>/ai-assistant/` — ask a follow-up question about a
+  completed stored report. Authenticated scans require the owner's JWT; public
+  scans require `X-Scan-Access-Token`. JSON accepts `question` (up to 2,000
+  characters) and an optional zero-based `finding_index`. The response is
+  Gemini-generated and unverified; AI output is not saved as a scanner finding.
+  Requests are throttled by `SCAN_AI_ASSISTANT_RATE` (default `10/hour`).
 - `GET /api/wazuh/vulnerabilities/?agent=<name-or-id>` — authenticated Wazuh
   Vulnerability Detection results for an agent. The `agent` query is optional;
   `WAZUH_AGENT_ID` or `WAZUH_AGENT_NAME` from `backend/.env` selects the default.
@@ -85,7 +91,12 @@ structure are preserved.
 
 Gemini explanations are optional (`include_ai:true`). They are stored with the
 label `AI-generated suggestion (unverified)`; a missing API key or failed
-generation does not prevent the scanner report from being stored.
+generation does not prevent the scanner report from being stored. The React
+`/reports/` page loads the stored report via its owner JWT or public scan token,
+and offers follow-up questions through the endpoint above. No API key is sent
+to the browser. The page can export the stored raw JSON and a formatted PDF;
+the browser's speech synthesis and dictation are optional UI features, with
+typed questions always available.
 
 ## Security-contact notification
 
@@ -140,6 +151,14 @@ or SQLMap execution path is provided. The `authorized` submission field is a
 user attestation, not independent proof of target ownership. Do not enable
 active scanning or SQLMap without a separate verified-ownership gate.
 
+The website's scope section reflects these limits: a completed baseline scan
+reports only what its limited crawl and passive rules observed; it is not a
+full penetration test or a guarantee that the target is secure. SQLMap reports
+can only be parsed/imported from an existing capture; a missing input log is an
+error and must not be interpreted as a clean scan. The Jenkins stage preserves
+ZAP's finding-related exit codes (0-2) when a non-empty JSON report exists, but
+fails on scanner runtime errors or a missing report.
+
 `SCAN_SUBMISSION_RATE` defaults to `5/hour`; `MAX_SCAN_REPORT_BYTES` defaults
 to 20 MiB. Optional Gemini uses `GEMINI_API_KEY`.
 
@@ -170,8 +189,10 @@ docker compose logs --tail 100 frontend
 ```
 
 The frontend is reachable locally on `http://127.0.0.1:8080` for a reverse
-proxy to route to. `docker compose up -d --build frontend` is sufficient to
-rebuild and replace only the frontend after a later frontend-only update.
+proxy to route to. Its Nginx configuration serves the React app and proxies
+`/api/` requests to the Compose backend. `docker compose up -d --build frontend`
+is sufficient to rebuild and replace only the frontend after a later
+frontend-only update.
 
 The default configuration uses the existing SQLite database volume. PostgreSQL
 is supported by setting `DATABASE_ENGINE=postgresql` and supplying

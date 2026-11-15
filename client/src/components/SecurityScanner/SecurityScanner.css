@@ -248,6 +248,17 @@
   color: #91a4bc;
 }
 
+.scanner-scope-note {
+  margin: 0.1rem 0;
+  padding: 0.75rem;
+  border: 1px solid rgba(112, 165, 205, 0.24);
+  border-radius: 0.7rem;
+  background: rgba(15, 36, 57, 0.55);
+  color: #a9bad0;
+  font-size: 0.78rem;
+  line-height: 1.55;
+}
+
 .scanner-submit-button {
   display: inline-flex;
   align-items: center;

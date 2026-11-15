@@ -7,6 +7,7 @@ from .scan_views import (
     scan_detail,
     scan_history,
     scan_report,
+    scan_ai_assistant,
     scan_submit,
 )
 from .scan_views import dashboard_summary
@@ -52,6 +53,11 @@ urlpatterns = [
     path('scans/history/', scan_history, name='scan-history'),
     path('scans/<uuid:scan_id>/', scan_detail, name='scan-detail'),
     path('scans/<uuid:scan_id>/report/', scan_report, name='scan-report'),
+    path(
+        'scans/<uuid:scan_id>/ai-assistant/',
+        scan_ai_assistant,
+        name='scan-ai-assistant',
+    ),
     path(
         'scans/<uuid:scan_id>/pipeline-result/',
         pipeline_callback,

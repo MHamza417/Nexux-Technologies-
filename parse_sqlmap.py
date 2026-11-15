@@ -13,7 +13,7 @@ Usage:
     python3 parse_sqlmap.py <target_url> <sqlmap_log_file> <output_json_file>
 
 Example:
-    python3 parse_sqlmap.py "http://13.63.222.33/api/analyze-report/?id=1" \
+    python3 parse_sqlmap.py "https://authorized.example/item?id=1" \
         sqlmap-reports/sqlmap_output.log \
         sqlmap-reports/sqlmap_findings.json
 """
@@ -21,7 +21,6 @@ Example:
 import sys
 import re
 import json
-import os
 
 
 def parse_sqlmap_log(log_text):
@@ -83,16 +82,12 @@ def main():
     log_file = sys.argv[2]
     output_file = sys.argv[3]
 
-    if not os.path.exists(log_file):
-        print(f"ERROR: log file not found: {log_file}")
-        # Still write an empty findings file so the pipeline doesn't break
-        result = {"target": target_url, "dbms": "unknown", "findings": []}
-        with open(output_file, "w") as f:
-            json.dump(result, f, indent=2)
-        sys.exit(0)
-
-    with open(log_file, "r", errors="ignore") as f:
-        log_text = f.read()
+    try:
+        with open(log_file, "r", errors="ignore") as f:
+            log_text = f.read()
+    except OSError as exc:
+        print(f"ERROR: cannot read SQLMap log: {exc}", file=sys.stderr)
+        sys.exit(1)
 
     findings = parse_sqlmap_log(log_text)
     dbms = detect_dbms(log_text)

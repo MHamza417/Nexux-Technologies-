@@ -237,8 +237,9 @@ pipeline {
                     mkdir -p zap-reports
                     chmod 777 zap-reports
 
-                    echo "Starting OWASP ZAP scan..."
+                    echo "Starting OWASP ZAP Baseline scan (limited crawl and passive rules)..."
 
+                    set +e
                     docker run --rm \
                         -u root \
                         -v "$(pwd)/zap-reports:/zap/wrk" \
@@ -246,9 +247,21 @@ pipeline {
                         zap-baseline.py \
                         -t "$TARGET_URL" \
                         -r report.html \
-                        -J report.json || true
+                        -J report.json
+                    zap_status=$?
+                    set -e
+
+                    if [ "$zap_status" -gt 2 ]; then
+                        echo "ZAP failed to complete (exit code $zap_status)."
+                        exit 1
+                    fi
+                    if [ ! -s zap-reports/report.json ]; then
+                        echo "ZAP did not produce a non-empty JSON report."
+                        exit 1
+                    fi
+
                     docker run --rm -u root -v "$PWD/zap-reports:/zap/wrk" --entrypoint chown ghcr.io/zaproxy/zaproxy:stable -R $(id -u):$(id -g) /zap/wrk
-                    echo "ZAP scan completed."
+                    echo "ZAP Baseline report generated (exit code $zap_status)."
 
                     ls -lah zap-reports
                 '''

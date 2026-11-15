@@ -9,7 +9,7 @@ from django.test import TestCase, override_settings
 from rest_framework.test import APIClient
 
 from . import scan_security
-from .models import ScanJob, VulnerabilityReport
+from .models import ScanFinding, ScanJob, VulnerabilityReport
 from .scan_pipeline import PipelineUnavailable, trigger_scan_pipeline
 from .scan_views import _finding_values, _log_scan_lifecycle
 
@@ -422,6 +422,162 @@ class ScanApiTests(TestCase):
             list(_finding_values("ZAP", {}))
         with self.assertRaisesRegex(ValueError, "missing its issue list"):
             list(_finding_values("SonarQube", {}))
+
+    def test_ai_assistant_uses_owned_stored_report_and_selected_finding(self):
+        scan = ScanJob.objects.create(
+            owner=self.owner,
+            target_type=ScanJob.TargetType.WEBSITE,
+            target="https://example.com/",
+            authorized=True,
+            status=ScanJob.Status.COMPLETED,
+        )
+        VulnerabilityReport.objects.create(
+            scan_job=scan,
+            project_name=scan.target,
+            raw_json_report={"site": []},
+            gemini_analysis="",
+            scan_type="ZAP",
+            vulnerability_counts={"total": 1, "high": 1},
+        )
+        ScanFinding.objects.create(
+            scan=scan,
+            scanner="ZAP",
+            title="Missing CSP",
+            severity="High",
+            evidence="header absent",
+        )
+        self.authenticated_as()
+        client = MagicMock()
+        client.models.generate_content.return_value = SimpleNamespace(
+            text="Add a restrictive policy and verify the response header."
+        )
+        with patch("api.views.get_gemini_client", return_value=client):
+            response = self.client.post(
+                f"/api/scans/{scan.id}/ai-assistant/",
+                {"question": "How do I fix this?", "finding_index": 0},
+                format="json",
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.data["ai_generated"])
+        self.assertEqual(response.data["model"], "gemini-2.0-flash")
+        self.assertIn("verify", response.data["answer"])
+        prompt = client.models.generate_content.call_args.kwargs["contents"]
+        self.assertIn("Missing CSP", prompt)
+        self.assertIn("header absent", prompt)
+        self.assertIn("How do I fix this?", prompt)
+
+    def test_ai_assistant_requires_report_access_and_valid_question(self):
+        scan = ScanJob.objects.create(
+            owner=self.owner,
+            target_type=ScanJob.TargetType.REPOSITORY,
+            target="https://github.com/owner/repo.git",
+            authorized=True,
+            status=ScanJob.Status.COMPLETED,
+        )
+        VulnerabilityReport.objects.create(
+            scan_job=scan,
+            project_name=scan.target,
+            raw_json_report={"issues": []},
+            gemini_analysis="",
+            scan_type="SonarQube",
+            vulnerability_counts={},
+        )
+
+        denied = self.client.post(
+            f"/api/scans/{scan.id}/ai-assistant/",
+            {"question": "Explain this report."},
+            format="json",
+        )
+        self.assertEqual(denied.status_code, 404)
+
+        self.authenticated_as(self.other_user)
+        other_owner_denied = self.client.post(
+            f"/api/scans/{scan.id}/ai-assistant/",
+            {"question": "Explain this report."},
+            format="json",
+        )
+        self.assertEqual(other_owner_denied.status_code, 404)
+
+        self.authenticated_as()
+        invalid = self.client.post(
+            f"/api/scans/{scan.id}/ai-assistant/",
+            {"question": " "},
+            format="json",
+        )
+        self.assertEqual(invalid.status_code, 400)
+        invalid_index = self.client.post(
+            f"/api/scans/{scan.id}/ai-assistant/",
+            {"question": "Explain the report.", "finding_index": 0},
+            format="json",
+        )
+        self.assertEqual(invalid_index.status_code, 400)
+
+    def test_public_ai_assistant_requires_public_scan_token(self):
+        scan = ScanJob.objects.create(
+            owner=None,
+            access_token="public-report-token",
+            target_type=ScanJob.TargetType.WEBSITE,
+            target="https://example.com/",
+            authorized=True,
+            status=ScanJob.Status.COMPLETED,
+        )
+        VulnerabilityReport.objects.create(
+            scan_job=scan,
+            project_name=scan.target,
+            raw_json_report={"site": []},
+            gemini_analysis="",
+            scan_type="ZAP",
+            vulnerability_counts={},
+        )
+        client = MagicMock()
+        client.models.generate_content.return_value = SimpleNamespace(text="Verified answer.")
+        with patch("api.views.get_gemini_client", return_value=client):
+            denied = self.client.post(
+                f"/api/scans/{scan.id}/ai-assistant/",
+                {"question": "Explain the report."},
+                format="json",
+            )
+            accepted = self.client.post(
+                f"/api/scans/{scan.id}/ai-assistant/",
+                {"question": "Explain the report."},
+                format="json",
+                HTTP_X_SCAN_ACCESS_TOKEN="public-report-token",
+            )
+
+        self.assertEqual(denied.status_code, 404)
+        self.assertEqual(accepted.status_code, 200)
+        self.assertEqual(accepted.data["answer"], "Verified answer.")
+
+    def test_ai_assistant_returns_safe_unavailable_message(self):
+        scan = ScanJob.objects.create(
+            owner=self.owner,
+            target_type=ScanJob.TargetType.WEBSITE,
+            target="https://example.com/",
+            authorized=True,
+            status=ScanJob.Status.COMPLETED,
+        )
+        VulnerabilityReport.objects.create(
+            scan_job=scan,
+            project_name=scan.target,
+            raw_json_report={"site": []},
+            gemini_analysis="",
+            scan_type="ZAP",
+            vulnerability_counts={},
+        )
+        self.authenticated_as()
+        with patch(
+            "api.views.get_gemini_client",
+            side_effect=RuntimeError("secret-value-must-not-be-returned"),
+        ):
+            response = self.client.post(
+                f"/api/scans/{scan.id}/ai-assistant/",
+                {"question": "Explain this report."},
+                format="json",
+            )
+
+        self.assertEqual(response.status_code, 503)
+        self.assertNotIn("secret-value", response.data["detail"])
 
     def test_deleting_scan_owner_does_not_orphan_private_report(self):
         scan = ScanJob.objects.create(

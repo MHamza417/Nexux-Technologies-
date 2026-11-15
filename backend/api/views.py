@@ -144,7 +144,9 @@ def ask_gemini(prompt):
         )
         return response.text or "Analysis generated placeholder."
     except Exception as ai_err:
-        print("AI Generation Skipped due to Quota/Error:", str(ai_err))
+        scan_logger.warning(
+            "Gemini analysis unavailable (%s).", type(ai_err).__name__
+        )
         return (
             "AI Analysis unavailable due to API quota limits or network issue. "
             "Please check the raw JSON report data for complete vulnerability details."

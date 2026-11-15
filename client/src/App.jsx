@@ -1,3 +1,4 @@
+import { lazy, Suspense } from "react";
 import "./App.css";
 
 import Navbar from "./components/Navbar/Navbar";
@@ -12,8 +13,17 @@ import Testimonials from "./components/Testimonials/Testimonials";
 import Contact from "./components/Contact/Contact";
 import Footer from "./components/Footer/Footer";
 import Vulnerabilities from "./components/Vulnerabilities/Vulnerabilities";
+const ReportDashboard = lazy(() => import("./components/ReportDashboard/ReportDashboard"));
 
 function App() {
+  if (/^\/reports\/?$/.test(window.location.pathname)) {
+    return (
+      <Suspense fallback={<main style={{ minHeight: "100vh", padding: "3rem", background: "#f3f6fb", color: "#17365e" }}>Loading security report…</main>}>
+        <ReportDashboard />
+      </Suspense>
+    );
+  }
+
   const vulnerabilityRoute = window.location.pathname.match(/^\/vulnerabilities\/([^/]+)\/?$/);
   if (vulnerabilityRoute) {
     let agent = vulnerabilityRoute[1];

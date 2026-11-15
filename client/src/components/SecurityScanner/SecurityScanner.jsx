@@ -60,7 +60,7 @@ function SecurityScanner() {
       try {
         const latest = await loadPublicScan(scanAccess.scan_id, scanAccess.access_token);
         if (active) {
-          setScan(latest);
+          openScan(latest, scanAccess.access_token);
           setScanError("");
         }
       } catch (error) {
@@ -127,6 +127,9 @@ function SecurityScanner() {
     });
     setScanAccess(access);
     setScan(scanData);
+    if (scanData.status === "completed") {
+      window.location.replace(`/reports/?scan_id=${encodeURIComponent(scanData.scan_id)}`);
+    }
   }
 
   async function handleDownloadReport() {
@@ -162,11 +165,12 @@ function SecurityScanner() {
           <h2 id="scanner-title">Scan with confidence.<br /><span>Ship with clarity.</span></h2>
           <p>
             Run an authorized security scan against your website or public GitHub repository.
-            Review pipeline status and findings in one place.
+            Review the completed scan status and findings. The exact scan coverage is shown
+            before you submit.
           </p>
           <ul className="scanner-capabilities">
-            <li><FaCheckCircle /> OWASP ZAP website scanning</li>
-            <li><FaCheckCircle /> SonarQube repository analysis</li>
+            <li><FaCheckCircle /> Website: OWASP ZAP Baseline (limited crawl, passive rules only)</li>
+            <li><FaCheckCircle /> Public GitHub repository: SonarQube static analysis</li>
             <li><FaLock /> Targets are checked before scanning</li>
           </ul>
         </div>
@@ -239,6 +243,12 @@ function SecurityScanner() {
               <span>Add optional Gemini analysis <small>(AI guidance is unverified)</small></span>
             </label>
 
+            <p className="scanner-scope-note">
+              No active ZAP attack tests or SQLMap runs are performed. SQLMap is currently
+              limited to importing previously captured reports. A scan can only run when
+              the isolated worker and required integrations are configured.
+            </p>
+
             {formError ? <p className="scanner-form-error" id="scan-form-error" role="alert">{formError}</p> : null}
             <button className="scanner-submit-button" type="submit" disabled={submitting}>
               {submitting ? <><FaSpinner className="scanner-spin" /> Submitting scan</> : <>Start security scan <FaArrowRight /></>}
@@ -267,7 +277,10 @@ function SecurityScanner() {
               {scan.failure_reason ? <p className="scanner-result-note">{scan.failure_reason}</p> : null}
               {scan.status === "completed" ? (
                 <>
-                  <p className="scanner-result-note">{findings.length} finding{findings.length === 1 ? "" : "s"} reported.</p>
+                  <p className="scanner-result-note">
+                    {findings.length} finding{findings.length === 1 ? "" : "s"} reported in
+                    this scan&apos;s scope. A completed scan is not a guarantee of security.
+                  </p>
                   {findings.length ? (
                     <ul className="scanner-findings">
                       {findings.slice(0, 5).map((finding, index) => (
