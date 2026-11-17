@@ -255,6 +255,7 @@ function ReportDashboard() {
   const [assistantError, setAssistantError] = useState("");
   const [asking, setAsking] = useState(false);
   const [messages, setMessages] = useState([]);
+  const [latestAssistantText, setLatestAssistantText] = useState("");
   const [speechState, setSpeechState] = useState("stopped");
   const [voiceError, setVoiceError] = useState("");
   const recognitionRef = useRef(null);
@@ -543,6 +544,12 @@ function ReportDashboard() {
   }
 
   function startListening() {
+    if (typeof window === "undefined" || !window.isSecureContext) {
+      setVoiceError(
+        "Voice dictation requires HTTPS or localhost. You can still type your question and use voice playback.",
+      );
+      return;
+    }
     const SpeechRecognition = typeof window !== "undefined" ? (window.SpeechRecognition || window.webkitSpeechRecognition) : null;
     if (!SpeechRecognition) {
       setVoiceError("Microphone dictation is not supported. Type your question instead.");
@@ -585,9 +592,12 @@ function ReportDashboard() {
         findingSelection === "all" ? undefined : Number(findingSelection),
         accessToken,
       );
+      const answer = typeof result?.answer === "string" ? result.answer.trim() : "";
+      if (!answer) throw new Error("The AI assistant returned no readable answer.");
+      setLatestAssistantText(answer);
       setMessages((previous) => [...previous, {
         role: "assistant",
-        text: result.answer,
+        text: answer,
         aiGenerated: result.ai_generated,
       }]);
     } catch (error) {
@@ -608,9 +618,12 @@ function ReportDashboard() {
         undefined,
         accessToken,
       );
+      const answer = typeof result?.answer === "string" ? result.answer.trim() : "";
+      if (!answer) throw new Error("Gemini returned no readable suggestions.");
+      setLatestAssistantText(answer);
       setMessages((previous) => [...previous, {
         role: "assistant",
-        text: result.answer,
+        text: answer,
         aiGenerated: result.ai_generated,
       }]);
       document.getElementById("report-ai-chat")?.scrollIntoView({
@@ -644,11 +657,7 @@ function ReportDashboard() {
     savedAnalysis && !savedAnalysis.toLowerCase().startsWith("ai analysis unavailable"),
   );
   const hasGeneratedAnswer = messages.some((message) => message.role === "assistant");
-  const latestAssistantMessage = useMemo(() => {
-    const last = [...messages].reverse().find((m) => m.role === "assistant");
-    return last ? last.text : "";
-  }, [messages]);
-  const playableText = latestAssistantMessage || (hasSavedAnalysis ? savedAnalysis : "");
+  const playableText = latestAssistantText || (hasSavedAnalysis ? savedAnalysis : "");
 
   return (
     <main className="report-page">
@@ -941,7 +950,16 @@ function ReportDashboard() {
                       <option key={`${finding.title}-${index}`} value={index}>Finding {index + 1}: {finding.title}</option>
                     ))}
                   </select>
-                  <button type="button" onClick={startListening} aria-label="Dictate question with microphone"><FaMicrophone /> Dictate</button>
+                  <button
+                    type="button"
+                    onClick={startListening}
+                    aria-label="Dictate question with microphone"
+                    title={typeof window !== "undefined" && !window.isSecureContext
+                      ? "Voice dictation requires HTTPS or localhost."
+                      : "Dictate your question"}
+                  >
+                    <FaMicrophone /> Dictate
+                  </button>
                 </div>
                 <div className="report-question-input">
                   <textarea

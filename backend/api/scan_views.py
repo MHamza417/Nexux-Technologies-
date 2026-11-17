@@ -464,11 +464,13 @@ def scan_ai_assistant(request, scan_id):
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
     except Exception as exc:
-        scan_events_logger.warning(
-            "Gemini report assistant unavailable (model=%s, error=%s, status=%s).",
+        scan_events_logger.exception(
+            "Gemini report assistant unavailable (model=%s, error=%r, status=%s, "
+            "upstream_response=%r).",
             settings.GEMINI_MODEL,
-            type(exc).__name__,
+            exc,
             getattr(exc, "code", "unknown"),
+            getattr(exc, "response", None),
         )
         return Response(
             {

@@ -106,6 +106,65 @@ class ScanApiTests(TestCase):
             contents="Explain the stored finding.",
         )
 
+    def test_gemini_generation_retries_rate_limits_with_exponential_backoff(self):
+        from .views import generate_gemini_content
+
+        rate_limit = RuntimeError("rate limit")
+        rate_limit.code = 429
+        client = MagicMock()
+        client.models.generate_content.side_effect = [
+            rate_limit,
+            rate_limit,
+            SimpleNamespace(text="Recovered answer"),
+        ]
+        with (
+            override_settings(
+                GEMINI_MODEL="gemini-test-model",
+                GEMINI_FALLBACK_MODEL="gemini-fallback-model",
+            ),
+            patch("api.views.get_gemini_client", return_value=client),
+            patch("api.views.time.sleep") as sleep,
+        ):
+            response = generate_gemini_content("Explain the stored finding.")
+
+        self.assertEqual(response.text, "Recovered answer")
+        self.assertEqual(
+            [call.kwargs["model"] for call in client.models.generate_content.call_args_list],
+            ["gemini-test-model"] * 3,
+        )
+        self.assertEqual([call.args[0] for call in sleep.call_args_list], [1, 2])
+
+    def test_gemini_generation_falls_back_after_service_unavailable_retries(self):
+        from .views import generate_gemini_content
+
+        unavailable = RuntimeError("service unavailable")
+        unavailable.code = 503
+        client = MagicMock()
+        client.models.generate_content.side_effect = [
+            unavailable,
+            unavailable,
+            unavailable,
+            unavailable,
+            SimpleNamespace(text="Fallback answer"),
+        ]
+        with (
+            override_settings(
+                GEMINI_MODEL="gemini-2.5-flash",
+                GEMINI_FALLBACK_MODEL="gemini-2.5-flash-lite",
+            ),
+            patch("api.views.get_gemini_client", return_value=client),
+            patch("api.views.time.sleep") as sleep,
+            self.assertLogs("security.scans", level="WARNING"),
+        ):
+            response = generate_gemini_content("Explain the stored finding.")
+
+        self.assertEqual(response.text, "Fallback answer")
+        self.assertEqual(
+            [call.kwargs["model"] for call in client.models.generate_content.call_args_list],
+            ["gemini-2.5-flash"] * 4 + ["gemini-2.5-flash-lite"],
+        )
+        self.assertEqual([call.args[0] for call in sleep.call_args_list], [1, 2, 4])
+
     def test_gemini_quota_error_is_explained_without_exposing_exception_text(self):
         from .views import gemini_unavailable_message
 

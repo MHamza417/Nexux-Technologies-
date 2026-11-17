@@ -1,6 +1,7 @@
 import os
 import json
 import logging
+import time
 from datetime import datetime, timezone
 from google import genai
 from google.genai import types
@@ -24,6 +25,9 @@ from .serializers import (
 
 scan_logger = logging.getLogger("security.scans")
 audit_logger = logging.getLogger("security.audit")
+
+GEMINI_RETRY_DELAYS = (1, 2, 4)
+GEMINI_RETRYABLE_STATUS_CODES = {429, 503}
 
 
 def zap_alerts_from_report(data):
@@ -140,10 +144,60 @@ def get_gemini_client():
 
 def generate_gemini_content(prompt):
     client = get_gemini_client()
-    return client.models.generate_content(
-        model=settings.GEMINI_MODEL,
-        contents=prompt,
-    )
+    primary_model = settings.GEMINI_MODEL
+
+    def generate_with_retries(model):
+        for attempt in range(len(GEMINI_RETRY_DELAYS) + 1):
+            try:
+                return client.models.generate_content(model=model, contents=prompt)
+            except Exception as error:
+                code = getattr(error, "code", getattr(error, "status_code", None))
+                try:
+                    code = int(code)
+                except (TypeError, ValueError):
+                    pass
+                if code not in GEMINI_RETRYABLE_STATUS_CODES:
+                    raise
+
+                scan_logger.warning(
+                    "Gemini request failed (model=%s, status=%s, error=%r, "
+                    "upstream_response=%r).",
+                    model,
+                    code,
+                    error,
+                    getattr(error, "response", None),
+                    exc_info=True,
+                )
+                if attempt == len(GEMINI_RETRY_DELAYS):
+                    raise
+                time.sleep(GEMINI_RETRY_DELAYS[attempt])
+
+    try:
+        return generate_with_retries(primary_model)
+    except Exception as error:
+        code = getattr(error, "code", getattr(error, "status_code", None))
+        try:
+            code = int(code)
+        except (TypeError, ValueError):
+            pass
+        fallback_model = getattr(settings, "GEMINI_FALLBACK_MODEL", "")
+        if (
+            code not in GEMINI_RETRYABLE_STATUS_CODES
+            or not fallback_model
+            or fallback_model == primary_model
+        ):
+            raise
+
+        scan_logger.exception(
+            "Primary Gemini model failed after retries; trying fallback model "
+            "(primary_model=%s, fallback_model=%s, status=%s, "
+            "upstream_response=%r).",
+            primary_model,
+            fallback_model,
+            code,
+            getattr(error, "response", None),
+        )
+        return generate_with_retries(fallback_model)
 
 
 def gemini_unavailable_message(error):
@@ -168,11 +222,13 @@ def ask_gemini(prompt):
         response = generate_gemini_content(prompt)
         return response.text or "Analysis generated placeholder."
     except Exception as ai_err:
-        scan_logger.warning(
-            "Gemini analysis unavailable (model=%s, error=%s, status=%s).",
+        scan_logger.exception(
+            "Gemini analysis unavailable (model=%s, error=%r, status=%s, "
+            "upstream_response=%r).",
             settings.GEMINI_MODEL,
-            type(ai_err).__name__,
+            ai_err,
             getattr(ai_err, "code", "unknown"),
+            getattr(ai_err, "response", None),
         )
         return f"AI Analysis unavailable: {gemini_unavailable_message(ai_err)}"
 
