@@ -35,6 +35,76 @@ const CHART_RADIUS = 42;
 const CHART_CIRCUMFERENCE = 2 * Math.PI * CHART_RADIUS;
 const EMPTY_FINDINGS = [];
 
+function splitSpeechText(text, maxLength = 180) {
+  if (!text) return [];
+  const words = String(text)
+    .replace(/```[\s\S]*?```/g, " code example omitted ")
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/<[^>]*>/g, " ")
+    .replace(/[*_#~>|]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .split(" ");
+  const chunks = [];
+  let chunk = "";
+
+  words.forEach((word) => {
+    if (!word) return;
+    if (word.length > maxLength) {
+      if (chunk) chunks.push(chunk);
+      chunk = "";
+      for (let index = 0; index < word.length; index += maxLength) {
+        chunks.push(word.slice(index, index + maxLength));
+      }
+      return;
+    }
+    if (chunk && chunk.length + word.length + 1 > maxLength) {
+      chunks.push(chunk);
+      chunk = word;
+    } else {
+      chunk = chunk ? `${chunk} ${word}` : word;
+    }
+  });
+  if (chunk) chunks.push(chunk);
+  return chunks;
+}
+
+function speechErrorMessage(error) {
+  switch (error) {
+    case "not-allowed":
+      return "Browser blocked audio output. Please allow audio/autoplay for this site and click Play again.";
+    case "voice-unavailable":
+    case "language-unavailable":
+      return "No suitable speech voice is installed. Add a voice in your system or browser settings and reload.";
+    case "audio-hardware":
+    case "audio-busy":
+      return "Voice playback could not access audio output. Check your speakers or headphones.";
+    case "network":
+      return "Network error during voice playback. Check your connection.";
+    case "canceled":
+    case "interrupted":
+      return "";
+    default:
+      return "Voice playback could not be started. Check browser audio settings and try again.";
+  }
+}
+
+function pickBestVoice(voices) {
+  if (!voices || !voices.length) return null;
+  const browserLang = (typeof navigator !== "undefined" && navigator.language ? navigator.language : "en-US").toLowerCase();
+  const langPrefix = browserLang.split("-")[0];
+
+  return (
+    voices.find((v) => v.lang && v.lang.toLowerCase() === browserLang) ||
+    voices.find((v) => v.lang && v.lang.toLowerCase().startsWith(browserLang)) ||
+    voices.find((v) => v.lang && v.lang.toLowerCase().startsWith(langPrefix)) ||
+    voices.find((v) => v.lang && v.lang.toLowerCase().startsWith("en")) ||
+    voices.find((v) => v.default) ||
+    voices[0] ||
+    null
+  );
+}
+
 function normalizedSeverity(value) {
   const normalized = String(value || "").toLowerCase();
   return SEVERITIES.find((item) => item.name.toLowerCase() === normalized)?.name
@@ -188,7 +258,37 @@ function ReportDashboard() {
   const [speechState, setSpeechState] = useState("stopped");
   const [voiceError, setVoiceError] = useState("");
   const recognitionRef = useRef(null);
+  const speechQueueRef = useRef([]);
+  const speechIndexRef = useRef(0);
+  const speechSessionRef = useRef(0);
+  const activeUtteranceRef = useRef(null);
+  const speechTimerRef = useRef(null);
+  const voicesRef = useRef([]);
   const accessToken = scanId ? tokenForScan(scanId) : "";
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.speechSynthesis) return undefined;
+    const synth = window.speechSynthesis;
+    const loadVoices = () => {
+      try {
+        const loaded = synth.getVoices() || [];
+        if (loaded.length > 0) {
+          voicesRef.current = loaded;
+        }
+      } catch (err) {
+        console.warn("Could not retrieve speechSynthesis voices:", err);
+      }
+    };
+    loadVoices();
+    if (typeof synth.addEventListener === "function") {
+      synth.addEventListener("voiceschanged", loadVoices);
+      return () => synth.removeEventListener("voiceschanged", loadVoices);
+    }
+    synth.onvoiceschanged = loadVoices;
+    return () => {
+      if (synth.onvoiceschanged === loadVoices) synth.onvoiceschanged = null;
+    };
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -220,7 +320,19 @@ function ReportDashboard() {
   }, [accessToken, scanId]);
 
   useEffect(() => () => {
-    window.speechSynthesis?.cancel();
+    speechSessionRef.current += 1;
+    if (speechTimerRef.current) clearTimeout(speechTimerRef.current);
+    activeUtteranceRef.current = null;
+    if (window.speechSynthesis) {
+      try {
+        window.speechSynthesis.cancel();
+        if (window.speechSynthesis.paused) {
+          window.speechSynthesis.resume();
+        }
+      } catch {
+        // ignore
+      }
+    }
     recognitionRef.current?.stop();
   }, []);
 
@@ -259,57 +371,200 @@ function ReportDashboard() {
   }, [counts, totalFindings]);
 
   function speak(text) {
-    if (!window.speechSynthesis || !text) {
-      setVoiceError("Text-to-speech is not supported in this browser.");
+    const synth = typeof window !== "undefined" ? window.speechSynthesis : null;
+    if (!synth || typeof window.SpeechSynthesisUtterance !== "function") {
+      const errorMsg = "Text-to-speech is not supported in this browser.";
+      console.error(errorMsg);
+      setVoiceError(errorMsg);
       return;
     }
-    window.speechSynthesis.cancel();
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.onstart = () => setSpeechState("playing");
-    utterance.onend = () => setSpeechState("stopped");
-    utterance.onerror = () => {
-      setSpeechState("stopped");
-      setVoiceError("Voice playback could not be started.");
-    };
+    const chunks = splitSpeechText(text);
+    if (!chunks.length) {
+      setVoiceError("No speech text available to read.");
+      return;
+    }
+
+    const session = speechSessionRef.current + 1;
+    speechSessionRef.current = session;
+    if (speechTimerRef.current) {
+      clearTimeout(speechTimerRef.current);
+      speechTimerRef.current = null;
+    }
+    activeUtteranceRef.current = null;
+
+    try {
+      if (synth.speaking || synth.pending) {
+        synth.cancel();
+      }
+      if (synth.paused) {
+        synth.resume();
+      }
+    } catch (err) {
+      console.warn("speechSynthesis cancel/resume error:", err);
+    }
+
+    speechQueueRef.current = chunks;
+    speechIndexRef.current = 0;
     setVoiceError("");
-    window.speechSynthesis.speak(utterance);
+    setSpeechState("playing");
+
+    const speakNextChunk = () => {
+      if (speechSessionRef.current !== session) return;
+      const chunk = speechQueueRef.current[speechIndexRef.current];
+      if (!chunk) {
+        activeUtteranceRef.current = null;
+        setSpeechState("stopped");
+        return;
+      }
+
+      try {
+        const utterance = new window.SpeechSynthesisUtterance(chunk);
+        activeUtteranceRef.current = utterance;
+
+        // Check if voices are loaded before calling speak()
+        let availableVoices = voicesRef.current;
+        if (!availableVoices || availableVoices.length === 0) {
+          try {
+            const freshVoices = synth.getVoices ? synth.getVoices() : [];
+            if (freshVoices && freshVoices.length > 0) {
+              availableVoices = freshVoices;
+              voicesRef.current = freshVoices;
+            }
+          } catch (voiceErr) {
+            console.warn("Could not retrieve voices from speechSynthesis:", voiceErr);
+          }
+        }
+
+        let chosenVoice = null;
+        if (availableVoices && availableVoices.length > 0) {
+          chosenVoice = pickBestVoice(availableVoices);
+        } else {
+          console.warn("SpeechSynthesis voices are not yet loaded. Falling back to default browser voice.");
+        }
+
+        if (chosenVoice) {
+          utterance.voice = chosenVoice;
+          utterance.lang = chosenVoice.lang || (typeof navigator !== "undefined" && navigator.language) || "en-US";
+        } else {
+          // Fallback to browser/system default voice and language
+          utterance.lang = (typeof navigator !== "undefined" && navigator.language) || "en-US";
+        }
+
+        utterance.rate = 1.0;
+        utterance.pitch = 1.0;
+
+        utterance.onend = () => {
+          if (speechSessionRef.current !== session) return;
+          speechIndexRef.current += 1;
+          speakNextChunk();
+        };
+
+        utterance.onerror = (event) => {
+          if (speechSessionRef.current !== session) return;
+          if (event.error === "canceled" || event.error === "interrupted") {
+            return;
+          }
+          console.error("SpeechSynthesis utterance error:", event.error, event);
+          speechSessionRef.current += 1;
+          activeUtteranceRef.current = null;
+          setSpeechState("stopped");
+          setVoiceError(speechErrorMessage(event.error));
+        };
+
+        if (synth.paused) {
+          synth.resume();
+        }
+        synth.speak(utterance);
+        if (synth.paused) {
+          synth.resume();
+        }
+      } catch (error) {
+        console.error("Voice playback could not be started:", error);
+        speechSessionRef.current += 1;
+        activeUtteranceRef.current = null;
+        setSpeechState("stopped");
+        const isBlock = error?.name === "NotAllowedError" || String(error?.message).toLowerCase().includes("not allowed");
+        setVoiceError(
+          isBlock
+            ? "Browser blocked audio output. Please allow audio/autoplay for this site and click Play again."
+            : "Voice playback could not be started. Check browser audio and speech voice settings."
+        );
+      }
+    };
+
+    // Strictly trigger playback directly inside the user click handler to comply with autoplay policy
+    speakNextChunk();
+  }
+
+  function handlePlay() {
+    if (!playableText) return;
+    if (speechState === "paused") {
+      pauseSpeech();
+      return;
+    }
+    speak(playableText);
   }
 
   function pauseSpeech() {
-    if (!window.speechSynthesis) return;
-    if (window.speechSynthesis.paused) {
-      window.speechSynthesis.resume();
-      setSpeechState("playing");
-    } else if (window.speechSynthesis.speaking) {
-      window.speechSynthesis.pause();
-      setSpeechState("paused");
+    const synth = typeof window !== "undefined" ? window.speechSynthesis : null;
+    if (!synth) return;
+    try {
+      if (synth.paused) {
+        synth.resume();
+        setSpeechState("playing");
+      } else if (synth.speaking) {
+        synth.pause();
+        setSpeechState("paused");
+      }
+    } catch (err) {
+      console.error("Error pausing/resuming voice playback:", err);
     }
   }
 
   function stopSpeech() {
-    window.speechSynthesis?.cancel();
+    speechSessionRef.current += 1;
+    if (speechTimerRef.current) {
+      clearTimeout(speechTimerRef.current);
+      speechTimerRef.current = null;
+    }
+    activeUtteranceRef.current = null;
+    const synth = typeof window !== "undefined" ? window.speechSynthesis : null;
+    if (synth) {
+      try {
+        synth.cancel();
+        if (synth.paused) {
+          synth.resume();
+        }
+      } catch (err) {
+        console.warn("speechSynthesis stop error:", err);
+      }
+    }
     setSpeechState("stopped");
   }
 
   function startListening() {
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    const SpeechRecognition = typeof window !== "undefined" ? (window.SpeechRecognition || window.webkitSpeechRecognition) : null;
     if (!SpeechRecognition) {
       setVoiceError("Microphone dictation is not supported. Type your question instead.");
       return;
     }
     setVoiceError("");
     const recognition = new SpeechRecognition();
-    recognition.lang = navigator.language || "en-US";
+    recognition.lang = (typeof navigator !== "undefined" && navigator.language) || "en-US";
     recognition.interimResults = false;
     recognition.onresult = (event) => {
       const transcript = event.results?.[0]?.[0]?.transcript;
       if (transcript) setQuestion((previous) => `${previous}${previous ? " " : ""}${transcript}`);
     };
-    recognition.onerror = () => setVoiceError("Microphone input was unavailable. Type your question instead.");
+    recognition.onerror = (err) => {
+      console.error("SpeechRecognition error:", err);
+      setVoiceError("Microphone input was unavailable. Type your question instead.");
+    };
     recognitionRef.current = recognition;
     try {
       recognition.start();
-    } catch {
+    } catch (err) {
+      console.error("SpeechRecognition start error:", err);
       setVoiceError("Microphone input could not start. Type your question instead.");
     }
   }
@@ -389,6 +644,11 @@ function ReportDashboard() {
     savedAnalysis && !savedAnalysis.toLowerCase().startsWith("ai analysis unavailable"),
   );
   const hasGeneratedAnswer = messages.some((message) => message.role === "assistant");
+  const latestAssistantMessage = useMemo(() => {
+    const last = [...messages].reverse().find((m) => m.role === "assistant");
+    return last ? last.text : "";
+  }, [messages]);
+  const playableText = latestAssistantMessage || (hasSavedAnalysis ? savedAnalysis : "");
 
   return (
     <main className="report-page">
@@ -635,10 +895,29 @@ function ReportDashboard() {
               )}
 
               <div className="report-voice-controls" aria-label="Voice playback controls">
-                <button type="button" onClick={() => hasSavedAnalysis && speak(savedAnalysis)} disabled={!hasSavedAnalysis}><FaPlay /> Play</button>
-                <button type="button" onClick={pauseSpeech} disabled={speechState === "stopped"}><FaPause /> {speechState === "paused" ? "Resume" : "Pause"}</button>
-                <button type="button" onClick={stopSpeech} disabled={speechState === "stopped"}><FaStop /> Stop</button>
-                <span>{speechState === "playing" ? "Playing" : speechState === "paused" ? "Paused" : "Voice ready"}</span>
+                <button
+                  type="button"
+                  onClick={handlePlay}
+                  disabled={!playableText}
+                  title={playableText ? "Play AI explanation aloud" : "No AI text available to play"}
+                >
+                  <FaPlay /> Play
+                </button>
+                <button type="button" onClick={pauseSpeech} disabled={speechState === "stopped"}>
+                  <FaPause /> {speechState === "paused" ? "Resume" : "Pause"}
+                </button>
+                <button type="button" onClick={stopSpeech} disabled={speechState === "stopped"}>
+                  <FaStop /> Stop
+                </button>
+                <span>
+                  {speechState === "playing"
+                    ? "Playing"
+                    : speechState === "paused"
+                    ? "Paused"
+                    : playableText
+                    ? "Voice ready"
+                    : "No voice text"}
+                </span>
               </div>
 
               <div className="report-chat" id="report-ai-chat" aria-live="polite">
