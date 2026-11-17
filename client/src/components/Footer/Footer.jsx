@@ -80,7 +80,7 @@ function Footer() {
 
           <p>📍 Lahore, Pakistan</p>
 
-          <p>📞 +92 300 1234567</p>
+          <a href="tel:+923191073635">📞 +92 3191073635</a>
 
           <a href="mailto:qevoratechnologies@gmail.com">
             📧 qevoratechnologies@gmail.com

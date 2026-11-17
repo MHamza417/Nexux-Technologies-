@@ -27,7 +27,7 @@ scan_logger = logging.getLogger("security.scans")
 audit_logger = logging.getLogger("security.audit")
 
 GEMINI_RETRY_DELAYS = (1, 2, 4)
-GEMINI_RETRYABLE_STATUS_CODES = {429, 503}
+GEMINI_RETRYABLE_STATUS_CODES = {429, 503, 504}
 GEMINI_FALLBACK_STATUS_CODES = GEMINI_RETRYABLE_STATUS_CODES | {404}
 
 

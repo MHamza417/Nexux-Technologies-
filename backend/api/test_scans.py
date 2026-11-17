@@ -165,6 +165,37 @@ class ScanApiTests(TestCase):
         )
         self.assertEqual([call.args[0] for call in sleep.call_args_list], [1, 2, 4])
 
+    def test_gemini_generation_retries_gateway_timeouts_then_uses_fallback(self):
+        from .views import generate_gemini_content
+
+        gateway_timeout = RuntimeError("gateway timeout")
+        gateway_timeout.code = 504
+        client = MagicMock()
+        client.models.generate_content.side_effect = [
+            gateway_timeout,
+            gateway_timeout,
+            gateway_timeout,
+            gateway_timeout,
+            SimpleNamespace(text="Fallback answer"),
+        ]
+        with (
+            override_settings(
+                GEMINI_MODEL="gemini-2.5-flash",
+                GEMINI_FALLBACK_MODEL="gemini-2.5-flash-lite",
+            ),
+            patch("api.views.get_gemini_client", return_value=client),
+            patch("api.views.time.sleep") as sleep,
+            self.assertLogs("security.scans", level="WARNING"),
+        ):
+            response = generate_gemini_content("Explain the stored finding.")
+
+        self.assertEqual(response.text, "Fallback answer")
+        self.assertEqual(
+            [call.kwargs["model"] for call in client.models.generate_content.call_args_list],
+            ["gemini-2.5-flash"] * 4 + ["gemini-2.5-flash-lite"],
+        )
+        self.assertEqual([call.args[0] for call in sleep.call_args_list], [1, 2, 4])
+
     def test_gemini_generation_falls_back_when_configured_model_is_not_found(self):
         from .views import generate_gemini_content
 
