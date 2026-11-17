@@ -28,6 +28,7 @@ audit_logger = logging.getLogger("security.audit")
 
 GEMINI_RETRY_DELAYS = (1, 2, 4)
 GEMINI_RETRYABLE_STATUS_CODES = {429, 503}
+GEMINI_FALLBACK_STATUS_CODES = GEMINI_RETRYABLE_STATUS_CODES | {404}
 
 
 def zap_alerts_from_report(data):
@@ -182,14 +183,14 @@ def generate_gemini_content(prompt):
             pass
         fallback_model = getattr(settings, "GEMINI_FALLBACK_MODEL", "")
         if (
-            code not in GEMINI_RETRYABLE_STATUS_CODES
+            code not in GEMINI_FALLBACK_STATUS_CODES
             or not fallback_model
             or fallback_model == primary_model
         ):
             raise
 
         scan_logger.exception(
-            "Primary Gemini model failed after retries; trying fallback model "
+            "Primary Gemini model failed; trying fallback model "
             "(primary_model=%s, fallback_model=%s, status=%s, "
             "upstream_response=%r).",
             primary_model,

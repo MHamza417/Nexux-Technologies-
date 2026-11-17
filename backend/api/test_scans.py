@@ -165,6 +165,34 @@ class ScanApiTests(TestCase):
         )
         self.assertEqual([call.args[0] for call in sleep.call_args_list], [1, 2, 4])
 
+    def test_gemini_generation_falls_back_when_configured_model_is_not_found(self):
+        from .views import generate_gemini_content
+
+        model_not_found = RuntimeError("model not found")
+        model_not_found.code = 404
+        client = MagicMock()
+        client.models.generate_content.side_effect = [
+            model_not_found,
+            SimpleNamespace(text="Fallback answer"),
+        ]
+        with (
+            override_settings(
+                GEMINI_MODEL="gemini-unavailable-model",
+                GEMINI_FALLBACK_MODEL="gemini-2.5-flash-lite",
+            ),
+            patch("api.views.get_gemini_client", return_value=client),
+            patch("api.views.time.sleep") as sleep,
+            self.assertLogs("security.scans", level="ERROR"),
+        ):
+            response = generate_gemini_content("Explain the stored finding.")
+
+        self.assertEqual(response.text, "Fallback answer")
+        self.assertEqual(
+            [call.kwargs["model"] for call in client.models.generate_content.call_args_list],
+            ["gemini-unavailable-model", "gemini-2.5-flash-lite"],
+        )
+        sleep.assert_not_called()
+
     def test_gemini_quota_error_is_explained_without_exposing_exception_text(self):
         from .views import gemini_unavailable_message
 
@@ -546,7 +574,7 @@ class ScanApiTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.data["ai_generated"])
-        self.assertEqual(response.data["model"], "gemini-3.5-flash")
+        self.assertEqual(response.data["model"], "gemini-2.5-flash")
         self.assertIn("verify", response.data["answer"])
         prompt = client.models.generate_content.call_args.kwargs["contents"]
         self.assertIn("Missing CSP", prompt)
@@ -554,7 +582,7 @@ class ScanApiTests(TestCase):
         self.assertIn("How do I fix this?", prompt)
         self.assertEqual(
             client.models.generate_content.call_args.kwargs["model"],
-            "gemini-3.5-flash",
+            "gemini-2.5-flash",
         )
 
     def test_ai_assistant_requires_report_access_and_valid_question(self):

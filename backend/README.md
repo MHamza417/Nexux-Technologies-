@@ -90,7 +90,7 @@ parameterized ORM queries. Existing Grafana metric names and response
 structure are preserved.
 
 Gemini explanations are optional (`include_ai:true`) and use
-`GEMINI_MODEL` (default: `gemini-3.5-flash`), with `GEMINI_FALLBACK_MODEL`
+`GEMINI_MODEL` (default: `gemini-2.5-flash`), with `GEMINI_FALLBACK_MODEL`
 (default: `gemini-2.5-flash-lite`) as a fallback after retrying HTTP 429/503
 responses with exponential backoff. They are stored with the
 label `AI-generated suggestion (unverified)`; a missing API key or failed
