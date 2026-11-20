@@ -590,6 +590,7 @@ class ScanApiTests(TestCase):
             title="Missing CSP",
             severity="High",
             evidence="header absent",
+            remediation="Configure a restrictive Content-Security-Policy header.",
         )
         self.authenticated_as()
         client = MagicMock()
@@ -615,6 +616,53 @@ class ScanApiTests(TestCase):
             client.models.generate_content.call_args.kwargs["model"],
             "gemini-2.5-flash",
         )
+
+    def test_fix_suggestions_use_stored_remediation_when_gemini_is_unavailable(self):
+        scan = ScanJob.objects.create(
+            owner=self.owner,
+            target_type=ScanJob.TargetType.WEBSITE,
+            target="https://example.com/",
+            authorized=True,
+            status=ScanJob.Status.COMPLETED,
+        )
+        VulnerabilityReport.objects.create(
+            scan_job=scan,
+            project_name=scan.target,
+            raw_json_report={"site": []},
+            gemini_analysis="",
+            scan_type="ZAP",
+            vulnerability_counts={"total": 1, "high": 1},
+        )
+        ScanFinding.objects.create(
+            scan=scan,
+            scanner="ZAP",
+            title="Missing CSP",
+            severity="High",
+            affected_component="https://example.com/",
+            remediation="Configure a restrictive Content-Security-Policy header.",
+        )
+        self.authenticated_as()
+        upstream_error = RuntimeError("model not found")
+        upstream_error.code = 404
+        with patch("api.views.generate_gemini_content", side_effect=upstream_error):
+            response = self.client.post(
+                f"/api/scans/{scan.id}/ai-assistant/",
+                {
+                    "question": "Generate remediation steps.",
+                    "request_type": "fix_suggestions",
+                },
+                format="json",
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.data["ai_generated"])
+        self.assertEqual(response.data["source"], "stored_scanner_remediation")
+        self.assertIn("Missing CSP", response.data["answer"])
+        self.assertIn(
+            "Configure a restrictive Content-Security-Policy header.",
+            response.data["answer"],
+        )
+        self.assertIn("Gemini is unavailable", response.data["warning"])
 
     def test_ai_assistant_requires_report_access_and_valid_question(self):
         scan = ScanJob.objects.create(

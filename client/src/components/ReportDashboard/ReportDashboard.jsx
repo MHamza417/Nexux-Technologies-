@@ -253,6 +253,7 @@ function ReportDashboard() {
   const [findingSelection, setFindingSelection] = useState("all");
   const [question, setQuestion] = useState("");
   const [assistantError, setAssistantError] = useState("");
+  const [assistantNotice, setAssistantNotice] = useState("");
   const [asking, setAsking] = useState(false);
   const [messages, setMessages] = useState([]);
   const [latestAssistantText, setLatestAssistantText] = useState("");
@@ -584,6 +585,7 @@ function ReportDashboard() {
     setMessages((previous) => [...previous, userMessage]);
     setQuestion("");
     setAssistantError("");
+    setAssistantNotice("");
     setAsking(true);
     try {
       const result = await askScanAssistant(
@@ -610,6 +612,7 @@ function ReportDashboard() {
   async function generateFixSuggestions() {
     if (!report || asking) return;
     setAssistantError("");
+    setAssistantNotice("");
     setAsking(true);
     try {
       const result = await askScanAssistant(
@@ -617,14 +620,16 @@ function ReportDashboard() {
         "For each stored finding, explain the risk briefly and give prioritized, actionable remediation steps plus safe verification steps. Use only the supplied report, do not invent evidence or code context, and state when more code context is needed.",
         undefined,
         accessToken,
+        "fix_suggestions",
       );
       const answer = typeof result?.answer === "string" ? result.answer.trim() : "";
       if (!answer) throw new Error("Gemini returned no readable suggestions.");
+      setAssistantNotice(result.warning || "");
       setLatestAssistantText(answer);
       setMessages((previous) => [...previous, {
         role: "assistant",
         text: answer,
-        aiGenerated: result.ai_generated,
+        aiGenerated: Boolean(result.ai_generated),
       }]);
       document.getElementById("report-ai-chat")?.scrollIntoView({
         behavior: "smooth",
@@ -656,7 +661,9 @@ function ReportDashboard() {
   const hasSavedAnalysis = Boolean(
     savedAnalysis && !savedAnalysis.toLowerCase().startsWith("ai analysis unavailable"),
   );
-  const hasGeneratedAnswer = messages.some((message) => message.role === "assistant");
+  const hasGeneratedAnswer = messages.some(
+    (message) => message.role === "assistant" && message.aiGenerated,
+  );
   const playableText = latestAssistantText || (hasSavedAnalysis ? savedAnalysis : "");
 
   return (
@@ -932,13 +939,20 @@ function ReportDashboard() {
               <div className="report-chat" id="report-ai-chat" aria-live="polite">
                 {messages.map((message, index) => (
                   <article className={`report-chat-message ${message.role}`} key={`${message.role}-${index}`}>
-                    <strong>{message.role === "assistant" ? "Gemini · AI-generated" : "You"}</strong>
+                    <strong>
+                      {message.role !== "assistant"
+                        ? "You"
+                        : message.aiGenerated
+                        ? "Gemini · AI-generated"
+                        : "Scanner remediation · Stored report"}
+                    </strong>
                     <p>{message.text}</p>
                     {message.role === "assistant" ? <button type="button" onClick={() => speak(message.text)}><FaVolumeUp /> Read aloud</button> : null}
                   </article>
                 ))}
               </div>
               {assistantError ? <p className="report-inline-error" role="alert">{assistantError}</p> : null}
+              {assistantNotice ? <p className="report-inline-notice" role="status">{assistantNotice}</p> : null}
               {voiceError ? <p className="report-inline-error" role="status">{voiceError}</p> : null}
 
               <form className="report-question-form" onSubmit={submitQuestion}>

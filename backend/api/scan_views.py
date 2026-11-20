@@ -84,6 +84,45 @@ class ScanAIAssistantThrottle(ScopedRateThrottle):
     scope = "scan_ai_assistant"
 
 
+def _scanner_remediation_fallback(findings):
+    entries = []
+    for index, finding in enumerate(findings, start=1):
+        title = finding.get("title") or f"Finding {index}"
+        severity = finding.get("severity") or "Unspecified severity"
+        component = finding.get("affected_component")
+        remediation = finding.get("remediation")
+        details = [f"{index}. {title} ({severity})"]
+        if component:
+            details.append(f"Component: {component}")
+        details.append(
+            f"Scanner remediation: {remediation}"
+            if remediation
+            else "No scanner remediation was saved for this finding."
+        )
+        entries.append("\n".join(details))
+
+    answer = (
+        "Gemini could not generate AI suggestions. The following is taken only "
+        "from the stored scanner report and is not AI-generated:\n\n"
+        + (
+            "\n\n".join(entries)
+            if entries
+            else "No findings or scanner remediation data were saved in this report."
+        )
+    )
+    return Response(
+        {
+            "answer": answer,
+            "ai_generated": False,
+            "source": "stored_scanner_remediation",
+            "warning": (
+                "Gemini is unavailable; showing only remediation data saved by "
+                "the scanner. Verify it before applying."
+            ),
+        }
+    )
+
+
 def _finding_values(scan_type, raw_report):
     if scan_type == "ZAP":
         if not isinstance(raw_report, dict) or "site" not in raw_report:
@@ -402,6 +441,12 @@ def scan_ai_assistant(request, scan_id):
     question = question.strip()
     if len(question) > 2000:
         return Response({"detail": "Question must be 2000 characters or fewer."}, status=400)
+    request_type = request.data.get("request_type", "question")
+    if not isinstance(request_type, str) or request_type not in {
+        "question",
+        "fix_suggestions",
+    }:
+        return Response({"detail": "Unsupported AI assistant request type."}, status=400)
 
     findings = list(scan.findings.values(
         "scanner", "title", "severity", "affected_component", "evidence",
@@ -459,6 +504,8 @@ def scan_ai_assistant(request, scan_id):
         response = generate_gemini_content(prompt)
         answer = (response.text or "").strip()
         if not answer:
+            if request_type == "fix_suggestions":
+                return _scanner_remediation_fallback(relevant_findings)
             return Response(
                 {"detail": "The AI assistant returned an empty response. Try again later."},
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -472,6 +519,8 @@ def scan_ai_assistant(request, scan_id):
             getattr(exc, "code", "unknown"),
             getattr(exc, "response", None),
         )
+        if request_type == "fix_suggestions":
+            return _scanner_remediation_fallback(relevant_findings)
         return Response(
             {
                 "detail": (
