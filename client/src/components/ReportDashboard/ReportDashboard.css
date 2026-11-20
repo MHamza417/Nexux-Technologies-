@@ -841,6 +841,13 @@
   line-height: 1.5;
 }
 
+.report-inline-notice {
+  margin: 0.6rem 0;
+  color: #8a5a00;
+  font-size: 0.76rem;
+  line-height: 1.5;
+}
+
 .report-question-form {
   display: grid;
   gap: 0.55rem;

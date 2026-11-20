@@ -135,13 +135,23 @@ export async function loadReport(scanId) {
   return apiRequest(`/scans/${encodeURIComponent(scanId)}/report/`);
 }
 
-export async function askScanAssistant(scanId, question, findingIndex, accessToken = "") {
+export async function askScanAssistant(
+  scanId,
+  question,
+  findingIndex,
+  accessToken = "",
+  requestType = "question",
+) {
   return apiRequest(`/scans/${encodeURIComponent(scanId)}/ai-assistant/`, {
     method: "POST",
     auth: !accessToken,
     retryAuth: false,
     headers: accessToken ? publicHeaders(accessToken) : {},
-    body: JSON.stringify({ question, finding_index: findingIndex }),
+    body: JSON.stringify({
+      question,
+      finding_index: findingIndex,
+      request_type: requestType,
+    }),
   });
 }
 
