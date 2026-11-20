@@ -258,6 +258,7 @@ pipeline {
         stage('Deploy Compose Stack') {
             when {
                 expression { params.PIPELINE_MODE == 'deploy' }
+                expression { false }
             }
             options {
                 timeout(time: 30, unit: 'MINUTES')
