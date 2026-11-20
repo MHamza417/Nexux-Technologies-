@@ -150,7 +150,7 @@ class ScanApiTests(TestCase):
         with (
             override_settings(
                 GEMINI_MODEL="gemini-2.5-flash",
-                GEMINI_FALLBACK_MODEL="gemini-2.5-flash-lite",
+                GEMINI_FALLBACK_MODEL="gemini-3.5-flash-lite",
             ),
             patch("api.views.get_gemini_client", return_value=client),
             patch("api.views.time.sleep") as sleep,
@@ -161,9 +161,37 @@ class ScanApiTests(TestCase):
         self.assertEqual(response.text, "Fallback answer")
         self.assertEqual(
             [call.kwargs["model"] for call in client.models.generate_content.call_args_list],
-            ["gemini-2.5-flash"] * 4 + ["gemini-2.5-flash-lite"],
+            ["gemini-2.5-flash"] * 4 + ["gemini-3.5-flash-lite"],
         )
         self.assertEqual([call.args[0] for call in sleep.call_args_list], [1, 2, 4])
+
+    def test_gemini_timeout_budget_covers_retries_and_fallback(self):
+        from .views import generate_gemini_content
+
+        unavailable = RuntimeError("gateway timeout")
+        unavailable.code = 504
+        client = MagicMock()
+        client.models.generate_content.side_effect = unavailable
+        with (
+            override_settings(
+                GEMINI_MODEL="gemini-primary",
+                GEMINI_FALLBACK_MODEL="gemini-fallback",
+                GEMINI_TIMEOUT_SECONDS=5,
+            ),
+            patch("api.views.get_gemini_client", return_value=client) as get_client,
+            patch("api.views.time.monotonic", side_effect=[0, 0, 6, 6]),
+            patch("api.views.time.sleep") as sleep,
+            self.assertLogs("security.scans", level="WARNING"),
+            self.assertRaisesRegex(TimeoutError, "5-second total time budget"),
+        ):
+            generate_gemini_content("Explain the stored finding.")
+
+        get_client.assert_called_once_with(timeout_ms=5000)
+        client.models.generate_content.assert_called_once_with(
+            model="gemini-primary",
+            contents="Explain the stored finding.",
+        )
+        sleep.assert_not_called()
 
     def test_gemini_generation_retries_gateway_timeouts_then_uses_fallback(self):
         from .views import generate_gemini_content
@@ -181,7 +209,7 @@ class ScanApiTests(TestCase):
         with (
             override_settings(
                 GEMINI_MODEL="gemini-2.5-flash",
-                GEMINI_FALLBACK_MODEL="gemini-2.5-flash-lite",
+                GEMINI_FALLBACK_MODEL="gemini-3.5-flash-lite",
             ),
             patch("api.views.get_gemini_client", return_value=client),
             patch("api.views.time.sleep") as sleep,
@@ -192,7 +220,7 @@ class ScanApiTests(TestCase):
         self.assertEqual(response.text, "Fallback answer")
         self.assertEqual(
             [call.kwargs["model"] for call in client.models.generate_content.call_args_list],
-            ["gemini-2.5-flash"] * 4 + ["gemini-2.5-flash-lite"],
+            ["gemini-2.5-flash"] * 4 + ["gemini-3.5-flash-lite"],
         )
         self.assertEqual([call.args[0] for call in sleep.call_args_list], [1, 2, 4])
 
@@ -209,18 +237,18 @@ class ScanApiTests(TestCase):
         with (
             override_settings(
                 GEMINI_MODEL="gemini-unavailable-model",
-                GEMINI_FALLBACK_MODEL="gemini-2.5-flash-lite",
+                GEMINI_FALLBACK_MODEL="gemini-3.5-flash-lite",
             ),
             patch("api.views.get_gemini_client", return_value=client),
             patch("api.views.time.sleep") as sleep,
-            self.assertLogs("security.scans", level="ERROR"),
+            self.assertLogs("security.scans", level="WARNING"),
         ):
             response = generate_gemini_content("Explain the stored finding.")
 
         self.assertEqual(response.text, "Fallback answer")
         self.assertEqual(
             [call.kwargs["model"] for call in client.models.generate_content.call_args_list],
-            ["gemini-unavailable-model", "gemini-2.5-flash-lite"],
+            ["gemini-unavailable-model", "gemini-3.5-flash-lite"],
         )
         sleep.assert_not_called()
 
@@ -497,6 +525,97 @@ class ScanApiTests(TestCase):
         self.assertEqual(accepted.status_code, 200)
         scan.refresh_from_db()
         self.assertEqual(scan.status, ScanJob.Status.RUNNING)
+
+    @override_settings(SCAN_PIPELINE_TOKEN="pipeline-secret")
+    @patch("api.scan_views.send_security_report", return_value=False)
+    @patch("api.scan_views.discover_security_contact", return_value=None)
+    @patch("api.views.log_scan_event")
+    def test_callback_saves_remediation_after_gemini_timeout_and_is_idempotent(
+        self, _log_event, send_report, _discover_contact
+    ):
+        scan = ScanJob.objects.create(
+            owner=self.owner,
+            target_type=ScanJob.TargetType.WEBSITE,
+            target="https://example.com/",
+            authorized=True,
+            status=ScanJob.Status.RUNNING,
+            include_ai=True,
+        )
+        report_data = {
+            "site": [{
+                "@name": "https://example.com/",
+                "alerts": [{
+                    "name": "Missing CSP",
+                    "riskdesc": "High",
+                    "solution": "Configure a restrictive Content-Security-Policy.",
+                    "instances": [{
+                        "uri": "https://example.com/",
+                        "evidence": "header absent",
+                    }],
+                }],
+            }],
+        }
+        payload = {
+            "status": "completed",
+            "target_type": scan.target_type,
+            "target": scan.target,
+            "scan_type": "ZAP",
+            "report": report_data,
+        }
+        url = f"/api/scans/{scan.id}/pipeline-result/"
+        with (
+            patch(
+                "api.views.generate_gemini_content",
+                side_effect=TimeoutError("Gemini request timed out"),
+            ) as generate,
+            self.assertLogs("security.scans", level="ERROR"),
+        ):
+            first = self.client.post(
+                url,
+                payload,
+                format="json",
+                HTTP_X_SCAN_PIPELINE_TOKEN="pipeline-secret",
+            )
+            retry = self.client.post(
+                url,
+                payload,
+                format="json",
+                HTTP_X_SCAN_PIPELINE_TOKEN="pipeline-secret",
+            )
+
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(retry.status_code, 200)
+        self.assertEqual(first.data["report_id"], retry.data["report_id"])
+        self.assertEqual(VulnerabilityReport.objects.count(), 1)
+        self.assertEqual(scan.findings.count(), 1)
+        finding = scan.findings.get()
+        self.assertEqual(
+            finding.remediation,
+            "Configure a restrictive Content-Security-Policy.",
+        )
+        self.assertEqual(
+            VulnerabilityReport.objects.get(scan_job=scan).gemini_analysis,
+            "",
+        )
+        generate.assert_called_once()
+        send_report.assert_called_once()
+
+        conflicting_payload = {
+            **payload,
+            "report": {
+                "site": [{
+                    "@name": "https://example.com/",
+                    "alerts": [],
+                }],
+            },
+        }
+        conflict = self.client.post(
+            url,
+            conflicting_payload,
+            format="json",
+            HTTP_X_SCAN_PIPELINE_TOKEN="pipeline-secret",
+        )
+        self.assertEqual(conflict.status_code, 409)
 
     @override_settings(SCAN_PIPELINE_TOKEN="pipeline-secret")
     def test_pipeline_failure_is_terminal_and_report_stays_unavailable(self):

@@ -19,8 +19,11 @@ if dotenv_file.exists():
 
 # Gemini API Key
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
-GEMINI_FALLBACK_MODEL = os.getenv("GEMINI_FALLBACK_MODEL", "gemini-2.5-flash-lite")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL") or "gemini-2.5-flash"
+GEMINI_FALLBACK_MODEL = (
+    os.getenv("GEMINI_FALLBACK_MODEL") or "gemini-3.5-flash-lite"
+)
+GEMINI_TIMEOUT_SECONDS = max(1, int(os.getenv("GEMINI_TIMEOUT_SECONDS") or "25"))
 
 
 # ==========================

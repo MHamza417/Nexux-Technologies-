@@ -557,6 +557,24 @@ def _save_completed_scan(scan, scan_type, raw_report):
     from .views import ask_gemini, log_scan_event, scan_vulnerability_counts
 
     findings_data = list(_finding_values(scan_type, raw_report))
+    with transaction.atomic():
+        scan = ScanJob.objects.select_for_update().get(id=scan.id)
+        if scan.status == ScanJob.Status.COMPLETED:
+            existing_report = VulnerabilityReport.objects.filter(
+                scan_job=scan
+            ).first()
+            if (
+                existing_report
+                and existing_report.scan_type == scan_type
+                and existing_report.raw_json_report == raw_report
+            ):
+                return scan
+            raise ScanStateConflict(
+                "A completed scan already has a different report."
+            )
+        if scan.status != ScanJob.Status.RUNNING:
+            raise ScanStateConflict("Only running scans can accept a report.")
+
     ai_analysis = ""
     if scan.include_ai:
         ai_findings = [
@@ -586,11 +604,22 @@ def _save_completed_scan(scan, scan_type, raw_report):
         analysis = ask_gemini(prompt)
         if analysis and not analysis.lower().startswith("ai analysis unavailable"):
             ai_analysis = f"AI-generated suggestion (unverified):\n{analysis}"
-        else:
-            ai_analysis = analysis or "AI analysis unavailable."
 
     with transaction.atomic():
         scan = ScanJob.objects.select_for_update().get(id=scan.id)
+        if scan.status == ScanJob.Status.COMPLETED:
+            existing_report = VulnerabilityReport.objects.filter(
+                scan_job=scan
+            ).first()
+            if (
+                existing_report
+                and existing_report.scan_type == scan_type
+                and existing_report.raw_json_report == raw_report
+            ):
+                return scan
+            raise ScanStateConflict(
+                "A completed scan already has a different report."
+            )
         if scan.status != ScanJob.Status.RUNNING:
             raise ScanStateConflict("Only running scans can accept a report.")
         report = VulnerabilityReport.objects.create(

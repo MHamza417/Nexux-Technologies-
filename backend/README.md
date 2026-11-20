@@ -91,14 +91,19 @@ structure are preserved.
 
 Gemini explanations are optional (`include_ai:true`) and use
 `GEMINI_MODEL` (default: `gemini-2.5-flash`), with `GEMINI_FALLBACK_MODEL`
-(default: `gemini-2.5-flash-lite`) as a fallback after retrying HTTP 429/503
-responses with exponential backoff. They are stored with the
+(default: `gemini-3.5-flash-lite`) as a fallback after retrying HTTP 429/503/504
+responses with exponential backoff. The combined request budget across models
+and retries is `GEMINI_TIMEOUT_SECONDS` (default: 25 seconds). A model 404 skips
+retries and immediately tries the fallback. They are stored with the
 label `AI-generated suggestion (unverified)`; a missing API key or failed
 generation does not prevent the scanner report from being stored. Gemini API
 quota, key-access, and model errors are reported in the results page and logged
 server-side with upstream error details and tracebacks, without logging the API key. The React
 `/reports/` page loads the stored report via its owner JWT or public scan token,
-and offers follow-up questions through the endpoint above. No API key is sent
+and offers follow-up questions through the endpoint above. The Jenkins
+pipeline-result callback stores scanner findings and remediation independently
+of AI generation; a timed-out Gemini request does not prevent the report from
+being saved. No API key is sent
 to the browser. The page can export the stored raw JSON and a formatted PDF;
 the browser's speech synthesis and dictation are optional UI features, with
 typed questions always available.

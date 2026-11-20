@@ -11,7 +11,6 @@ pipeline {
     }
 
     environment {
-        GEMINI_API_KEY = credentials('GEMINI_API_KEY')
         TARGET_URL = "${params.SCAN_TARGET}"
     }
 
@@ -30,87 +29,6 @@ pipeline {
                             sh "${scannerHome}/bin/sonar-scanner"
                         }
                     }
-                }
-            }
-        }
-
-        stage('Build and Deploy Backend') {
-            when {
-                expression { params.PIPELINE_MODE == 'deploy' }
-            }
-            steps {
-                withCredentials([
-                    string(credentialsId: 'DJANGO_SECRET_KEY', variable: 'DJANGO_SECRET_KEY'),
-                    string(credentialsId: 'DJANGO_ALLOWED_HOSTS', variable: 'DJANGO_ALLOWED_HOSTS'),
-                    string(credentialsId: 'CORS_ALLOWED_ORIGINS', variable: 'CORS_ALLOWED_ORIGINS')
-                ]) {
-                    sh '''
-                        set -e
-
-                        echo "Building Docker image..."
-
-                        docker build -t intellisecops-backend:latest ./backend
-
-                        echo "Stopping old container..."
-
-                        docker stop intellisecops-backend || true
-                        docker rm intellisecops-backend || true
-
-                        echo "Creating persistent Docker volumes..."
-
-                        docker volume create intellisecops-data
-                        docker volume create intellisecops-logs
-
-                        echo "Fixing database volume permissions..."
-
-                        docker run --rm \
-                            --user root \
-                            -v intellisecops-data:/data \
-                            intellisecops-backend:latest \
-                            sh -c "chown -R app:app /data"
-
-                        echo "Starting new backend container..."
-
-                        set +x
-
-                        docker run -d \
-                            --name intellisecops-backend \
-                            --restart unless-stopped \
-                            -p 127.0.0.1:5000:5000 \
-                            -v intellisecops-data:/data \
-                            -v intellisecops-logs:/app/logs \
-                            -e GEMINI_API_KEY="$GEMINI_API_KEY" \
-                            -e DJANGO_DEBUG=false \
-                            -e DJANGO_SECRET_KEY="$DJANGO_SECRET_KEY" \
-                            -e DJANGO_ALLOWED_HOSTS="$DJANGO_ALLOWED_HOSTS" \
-                            -e CORS_ALLOWED_ORIGINS="$CORS_ALLOWED_ORIGINS" \
-                            intellisecops-backend:latest
-
-                        set -x
-
-                        echo "Waiting for backend..."
-
-                        for i in $(seq 1 15); do
-                            if curl -sf http://127.0.0.1:5000 > /dev/null; then
-                                echo "Backend is up."
-                                break
-                            fi
-
-                            echo "Backend not ready yet ($i/15)..."
-                            sleep 3
-                        done
-
-                        echo "Checking backend..."
-
-                        curl --fail http://127.0.0.1:5000
-
-                        echo "Running database migrations..."
-
-                        docker exec intellisecops-backend \
-                            python manage.py migrate --noinput
-
-                        echo "Backend deployed successfully!"
-                    '''
                 }
             }
         }
@@ -305,7 +223,9 @@ pipeline {
                         HTTP_STATUS=$(curl -s -o django_scan_response.json -w "%{http_code}" -X POST \
                             "$SCAN_API_BASE_URL/api/scans/$SCAN_ID/pipeline-result/" \
                             --connect-timeout 10 \
-                            --max-time 120 \
+                            --max-time 300 \
+                            --retry 2 \
+                            --retry-delay 5 \
                             -H "X-Scan-Pipeline-Token: $SCAN_PIPELINE_TOKEN" \
                             -H "Content-Type: application/json" \
                             --data-binary @scan-result.json)
@@ -332,6 +252,26 @@ pipeline {
                     allowEmptyArchive: true
 
                 echo 'Reports archived successfully!'
+            }
+        }
+
+        stage('Deploy Compose Stack') {
+            when {
+                expression { params.PIPELINE_MODE == 'deploy' }
+            }
+            options {
+                timeout(time: 30, unit: 'MINUTES')
+            }
+            steps {
+                dir('/home/ubuntu/Nexux-Technologies-') {
+                    sh '''
+                        set -e
+                        git pull --ff-only origin main
+                        docker compose build backend frontend
+                        docker compose up -d --no-deps --force-recreate backend frontend
+                        docker image prune -f
+                    '''
+                }
             }
         }
     }

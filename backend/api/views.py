@@ -124,7 +124,7 @@ def scan_vulnerability_counts(scan_type, raw_report):
     return counts
 
 
-def get_gemini_client():
+def get_gemini_client(timeout_ms=None):
     """
     Configure and return the modern Google GenAI client.
     """
@@ -136,7 +136,7 @@ def get_gemini_client():
     client = genai.Client(
         api_key=api_key,
         http_options=types.HttpOptions(
-            timeout=40000,
+            timeout=timeout_ms or settings.GEMINI_TIMEOUT_SECONDS * 1000,
             retry_options=types.HttpRetryOptions(attempts=1),
         ),
     )
@@ -144,19 +144,51 @@ def get_gemini_client():
 
 
 def generate_gemini_content(prompt):
-    client = get_gemini_client()
+    timeout_seconds = max(1, int(settings.GEMINI_TIMEOUT_SECONDS))
+    deadline = time.monotonic() + timeout_seconds
     primary_model = settings.GEMINI_MODEL
+    models = [primary_model]
+    fallback_model = getattr(settings, "GEMINI_FALLBACK_MODEL", "")
+    if fallback_model and fallback_model != primary_model:
+        models.append(fallback_model)
 
-    def generate_with_retries(model):
+    last_error = None
+    for model in models:
         for attempt in range(len(GEMINI_RETRY_DELAYS) + 1):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError(
+                    f"Gemini exceeded its {timeout_seconds}-second total time budget."
+                ) from last_error
             try:
+                client = get_gemini_client(timeout_ms=max(1, int(remaining * 1000)))
                 return client.models.generate_content(model=model, contents=prompt)
             except Exception as error:
-                code = getattr(error, "code", getattr(error, "status_code", None))
+                last_error = error
+                code = getattr(
+                    error,
+                    "code",
+                    getattr(
+                        error,
+                        "status_code",
+                        getattr(getattr(error, "response", None), "status_code", None),
+                    ),
+                )
                 try:
                     code = int(code)
                 except (TypeError, ValueError):
                     pass
+
+                if code == 404:
+                    scan_logger.warning(
+                        "Gemini model unavailable; skipping retries "
+                        "(model=%s, status=404, error=%r, upstream_response=%r).",
+                        model,
+                        error,
+                        getattr(error, "response", None),
+                        exc_info=True,
+                    )
+                    break
                 if code not in GEMINI_RETRYABLE_STATUS_CODES:
                     raise
 
@@ -170,38 +202,38 @@ def generate_gemini_content(prompt):
                     exc_info=True,
                 )
                 if attempt == len(GEMINI_RETRY_DELAYS):
-                    raise
-                time.sleep(GEMINI_RETRY_DELAYS[attempt])
+                    break
+                delay = GEMINI_RETRY_DELAYS[attempt]
+                if deadline - time.monotonic() <= delay:
+                    break
+                time.sleep(delay)
 
-    try:
-        return generate_with_retries(primary_model)
-    except Exception as error:
-        code = getattr(error, "code", getattr(error, "status_code", None))
+        if last_error is None:
+            break
+        code = getattr(
+            last_error,
+            "code",
+            getattr(
+                last_error,
+                "status_code",
+                getattr(getattr(last_error, "response", None), "status_code", None),
+            ),
+        )
         try:
             code = int(code)
         except (TypeError, ValueError):
             pass
-        fallback_model = getattr(settings, "GEMINI_FALLBACK_MODEL", "")
-        if (
-            code not in GEMINI_FALLBACK_STATUS_CODES
-            or not fallback_model
-            or fallback_model == primary_model
-        ):
-            raise
+        if code not in GEMINI_FALLBACK_STATUS_CODES:
+            raise last_error
 
-        scan_logger.exception(
-            "Primary Gemini model failed; trying fallback model "
-            "(primary_model=%s, fallback_model=%s, status=%s, "
-            "upstream_response=%r).",
-            primary_model,
-            fallback_model,
-            code,
-            getattr(error, "response", None),
-        )
-        return generate_with_retries(fallback_model)
+    if last_error is not None:
+        raise last_error
+    raise RuntimeError("No Gemini model is configured.")
 
 
 def gemini_unavailable_message(error):
+    if isinstance(error, TimeoutError):
+        return "Gemini exceeded the configured time limit. Scanner report data was preserved."
     code = getattr(error, "code", None)
     if code == 429:
         return "Gemini quota or rate limit reached. Check the API project's quota and billing."
