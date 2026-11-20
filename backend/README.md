@@ -92,9 +92,11 @@ structure are preserved.
 Gemini explanations are optional (`include_ai:true`) and use
 `GEMINI_MODEL` (default: `gemini-2.5-flash`), with `GEMINI_FALLBACK_MODEL`
 (default: `gemini-3.5-flash-lite`) as a fallback after retrying HTTP 429/503/504
-responses with exponential backoff. The combined request budget across models
-and retries is `GEMINI_TIMEOUT_SECONDS` (default: 25 seconds). A model 404 skips
-retries and immediately tries the fallback. They are stored with the
+responses and HTTP 400 errors that mention a deadline, using exponential
+backoff. Each Gemini request has a minimum 10-second timeout; the next attempt
+is skipped when less than 10 seconds remain in the combined request budget
+across models and retries, configured by `GEMINI_TIMEOUT_SECONDS` (default: 45
+seconds). A model 404 skips retries and immediately tries the fallback. They are stored with the
 label `AI-generated suggestion (unverified)`; a missing API key or failed
 generation does not prevent the scanner report from being stored. Gemini API
 quota, key-access, and model errors are reported in the results page and logged

@@ -29,6 +29,38 @@ audit_logger = logging.getLogger("security.audit")
 GEMINI_RETRY_DELAYS = (1, 2, 4)
 GEMINI_RETRYABLE_STATUS_CODES = {429, 503, 504}
 GEMINI_FALLBACK_STATUS_CODES = GEMINI_RETRYABLE_STATUS_CODES | {404}
+GEMINI_MIN_REQUEST_TIMEOUT_SECONDS = 10
+
+
+def _gemini_error_status(error):
+    code = getattr(
+        error,
+        "code",
+        getattr(
+            error,
+            "status_code",
+            getattr(getattr(error, "response", None), "status_code", None),
+        ),
+    )
+    try:
+        return int(code)
+    except (TypeError, ValueError):
+        return code
+
+
+def _is_gemini_deadline_error(error, code=None):
+    if code is None:
+        code = _gemini_error_status(error)
+    if code != 400:
+        return False
+
+    response_text = getattr(getattr(error, "response", None), "text", "")
+    message = " ".join(
+        str(value)
+        for value in (error, getattr(error, "message", ""), response_text)
+        if value
+    )
+    return "deadline" in message.lower()
 
 
 def zap_alerts_from_report(data):
@@ -156,28 +188,21 @@ def generate_gemini_content(prompt):
     for model in models:
         for attempt in range(len(GEMINI_RETRY_DELAYS) + 1):
             remaining = deadline - time.monotonic()
-            if remaining <= 0:
+            if remaining < GEMINI_MIN_REQUEST_TIMEOUT_SECONDS:
                 raise TimeoutError(
-                    f"Gemini exceeded its {timeout_seconds}-second total time budget."
+                    "Gemini has less than the minimum 10-second request timeout "
+                    f"remaining within its {timeout_seconds}-second total time budget."
                 ) from last_error
             try:
-                client = get_gemini_client(timeout_ms=max(1, int(remaining * 1000)))
+                request_timeout = max(
+                    GEMINI_MIN_REQUEST_TIMEOUT_SECONDS,
+                    remaining,
+                )
+                client = get_gemini_client(timeout_ms=int(request_timeout * 1000))
                 return client.models.generate_content(model=model, contents=prompt)
             except Exception as error:
                 last_error = error
-                code = getattr(
-                    error,
-                    "code",
-                    getattr(
-                        error,
-                        "status_code",
-                        getattr(getattr(error, "response", None), "status_code", None),
-                    ),
-                )
-                try:
-                    code = int(code)
-                except (TypeError, ValueError):
-                    pass
+                code = _gemini_error_status(error)
 
                 if code == 404:
                     scan_logger.warning(
@@ -189,7 +214,10 @@ def generate_gemini_content(prompt):
                         exc_info=True,
                     )
                     break
-                if code not in GEMINI_RETRYABLE_STATUS_CODES:
+                if (
+                    code not in GEMINI_RETRYABLE_STATUS_CODES
+                    and not _is_gemini_deadline_error(error, code)
+                ):
                     raise
 
                 scan_logger.warning(
@@ -204,26 +232,19 @@ def generate_gemini_content(prompt):
                 if attempt == len(GEMINI_RETRY_DELAYS):
                     break
                 delay = GEMINI_RETRY_DELAYS[attempt]
-                if deadline - time.monotonic() <= delay:
+                if deadline - time.monotonic() <= (
+                    delay + GEMINI_MIN_REQUEST_TIMEOUT_SECONDS
+                ):
                     break
                 time.sleep(delay)
 
         if last_error is None:
             break
-        code = getattr(
-            last_error,
-            "code",
-            getattr(
-                last_error,
-                "status_code",
-                getattr(getattr(last_error, "response", None), "status_code", None),
-            ),
-        )
-        try:
-            code = int(code)
-        except (TypeError, ValueError):
-            pass
-        if code not in GEMINI_FALLBACK_STATUS_CODES:
+        code = _gemini_error_status(last_error)
+        if (
+            code not in GEMINI_FALLBACK_STATUS_CODES
+            and not _is_gemini_deadline_error(last_error, code)
+        ):
             raise last_error
 
     if last_error is not None:
@@ -234,7 +255,9 @@ def generate_gemini_content(prompt):
 def gemini_unavailable_message(error):
     if isinstance(error, TimeoutError):
         return "Gemini exceeded the configured time limit. Scanner report data was preserved."
-    code = getattr(error, "code", None)
+    code = _gemini_error_status(error)
+    if _is_gemini_deadline_error(error, code):
+        return "Gemini timed out because the provider deadline was too short. Scanner report data was preserved."
     if code == 429:
         return "Gemini quota or rate limit reached. Check the API project's quota and billing."
     if code in {401, 403}:

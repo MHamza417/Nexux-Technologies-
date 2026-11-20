@@ -34,6 +34,27 @@ const SEVERITIES = [
 const CHART_RADIUS = 42;
 const CHART_CIRCUMFERENCE = 2 * Math.PI * CHART_RADIUS;
 const EMPTY_FINDINGS = [];
+const SCANNER_REMEDIATION_LABEL =
+  "Scanner remediation (not AI-generated; Gemini unavailable)";
+
+function plainReportText(value) {
+  return String(value ?? "").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+}
+
+function formatScannerRemediation(selectedFindings) {
+  if (!selectedFindings.length) {
+    return "No stored findings are available for this report.";
+  }
+
+  return selectedFindings.map(({ finding, index }) => {
+    const title = plainReportText(finding.title) || `Finding ${index + 1}`;
+    const severity = plainReportText(finding.severity) || "Unspecified severity";
+    const remediation = plainReportText(finding.remediation);
+    return `${index + 1}. ${title} (${severity})\nScanner remediation: ${
+      remediation || "No scanner remediation was saved for this finding."
+    }`;
+  }).join("\n\n");
+}
 
 function splitSpeechText(text, maxLength = 180) {
   if (!text) return [];
@@ -339,6 +360,27 @@ function ReportDashboard() {
   }, []);
 
   const findings = report?.findings || EMPTY_FINDINGS;
+  function selectedFindingEntries(selection = findingSelection) {
+    if (selection === "all") {
+      return findings.map((finding, index) => ({ finding, index }));
+    }
+    const index = Number(selection);
+    return findings[index] ? [{ finding: findings[index], index }] : [];
+  }
+
+  function showScannerRemediationFallback(selectedFindings) {
+    const answer = formatScannerRemediation(selectedFindings);
+    setAssistantError("");
+    setAssistantNotice(SCANNER_REMEDIATION_LABEL);
+    setLatestAssistantText(answer);
+    setMessages((previous) => [...previous, {
+      role: "assistant",
+      text: answer,
+      aiGenerated: false,
+      label: SCANNER_REMEDIATION_LABEL,
+    }]);
+  }
+
   const counts = useMemo(() => {
     const result = Object.fromEntries(SEVERITIES.map(({ name }) => [name, 0]));
     findings.forEach((finding) => {
@@ -581,6 +623,7 @@ function ReportDashboard() {
     event.preventDefault();
     const trimmedQuestion = question.trim();
     if (!trimmedQuestion || !report || asking) return;
+    const relevantFindings = selectedFindingEntries();
     const userMessage = { role: "user", text: trimmedQuestion };
     setMessages((previous) => [...previous, userMessage]);
     setQuestion("");
@@ -596,14 +639,18 @@ function ReportDashboard() {
       );
       const answer = typeof result?.answer === "string" ? result.answer.trim() : "";
       if (!answer) throw new Error("The AI assistant returned no readable answer.");
+      if (result.ai_generated !== true) {
+        showScannerRemediationFallback(relevantFindings);
+        return;
+      }
       setLatestAssistantText(answer);
       setMessages((previous) => [...previous, {
         role: "assistant",
         text: answer,
-        aiGenerated: result.ai_generated,
+        aiGenerated: true,
       }]);
-    } catch (error) {
-      setAssistantError(error.message || "AI assistance is unavailable. The stored report is unchanged.");
+    } catch {
+      showScannerRemediationFallback(relevantFindings);
     } finally {
       setAsking(false);
     }
@@ -624,19 +671,31 @@ function ReportDashboard() {
       );
       const answer = typeof result?.answer === "string" ? result.answer.trim() : "";
       if (!answer) throw new Error("Gemini returned no readable suggestions.");
+      if (result.ai_generated !== true) {
+        showScannerRemediationFallback(selectedFindingEntries("all"));
+        document.getElementById("report-ai-chat")?.scrollIntoView({
+          behavior: "smooth",
+          block: "center",
+        });
+        return;
+      }
       setAssistantNotice(result.warning || "");
       setLatestAssistantText(answer);
       setMessages((previous) => [...previous, {
         role: "assistant",
         text: answer,
-        aiGenerated: Boolean(result.ai_generated),
+        aiGenerated: true,
       }]);
       document.getElementById("report-ai-chat")?.scrollIntoView({
         behavior: "smooth",
         block: "center",
       });
-    } catch (error) {
-      setAssistantError(error.message || "Gemini could not generate suggestions. Check the server-side API key, quota, and connectivity.");
+    } catch {
+      showScannerRemediationFallback(selectedFindingEntries("all"));
+      document.getElementById("report-ai-chat")?.scrollIntoView({
+        behavior: "smooth",
+        block: "center",
+      });
     } finally {
       setAsking(false);
     }
@@ -942,9 +1001,11 @@ function ReportDashboard() {
                     <strong>
                       {message.role !== "assistant"
                         ? "You"
-                        : message.aiGenerated
-                        ? "Gemini · AI-generated"
-                        : "Scanner remediation · Stored report"}
+                        : message.label || (
+                          message.aiGenerated
+                            ? "Gemini · AI-generated"
+                            : "Scanner remediation · Stored report"
+                        )}
                     </strong>
                     <p>{message.text}</p>
                     {message.role === "assistant" ? <button type="button" onClick={() => speak(message.text)}><FaVolumeUp /> Read aloud</button> : null}

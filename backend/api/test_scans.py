@@ -165,33 +165,88 @@ class ScanApiTests(TestCase):
         )
         self.assertEqual([call.args[0] for call in sleep.call_args_list], [1, 2, 4])
 
-    def test_gemini_timeout_budget_covers_retries_and_fallback(self):
+    def test_gemini_skips_further_attempts_when_less_than_ten_seconds_remain(self):
         from .views import generate_gemini_content
 
-        unavailable = RuntimeError("gateway timeout")
-        unavailable.code = 504
+        rate_limit = RuntimeError("rate limit")
+        rate_limit.code = 429
         client = MagicMock()
-        client.models.generate_content.side_effect = unavailable
+        client.models.generate_content.side_effect = rate_limit
         with (
             override_settings(
                 GEMINI_MODEL="gemini-primary",
                 GEMINI_FALLBACK_MODEL="gemini-fallback",
-                GEMINI_TIMEOUT_SECONDS=5,
+                GEMINI_TIMEOUT_SECONDS=45,
             ),
             patch("api.views.get_gemini_client", return_value=client) as get_client,
-            patch("api.views.time.monotonic", side_effect=[0, 0, 6, 6]),
+            patch("api.views.time.monotonic", side_effect=[0, 0, 38, 38]),
             patch("api.views.time.sleep") as sleep,
             self.assertLogs("security.scans", level="WARNING"),
-            self.assertRaisesRegex(TimeoutError, "5-second total time budget"),
+            self.assertRaisesRegex(TimeoutError, "less than the minimum 10-second"),
         ):
             generate_gemini_content("Explain the stored finding.")
 
-        get_client.assert_called_once_with(timeout_ms=5000)
+        get_client.assert_called_once_with(timeout_ms=45000)
         client.models.generate_content.assert_called_once_with(
             model="gemini-primary",
             contents="Explain the stored finding.",
         )
         sleep.assert_not_called()
+
+    def test_gemini_per_request_timeout_never_drops_below_ten_seconds(self):
+        from .views import generate_gemini_content
+
+        rate_limit = RuntimeError("rate limit")
+        rate_limit.code = 429
+        client = MagicMock()
+        client.models.generate_content.side_effect = [
+            rate_limit,
+            SimpleNamespace(text="Recovered answer"),
+        ]
+        with (
+            override_settings(
+                GEMINI_MODEL="gemini-primary",
+                GEMINI_FALLBACK_MODEL="",
+                GEMINI_TIMEOUT_SECONDS=45,
+            ),
+            patch("api.views.get_gemini_client", return_value=client) as get_client,
+            patch("api.views.time.monotonic", side_effect=[0, 0, 32, 34]),
+            patch("api.views.time.sleep") as sleep,
+        ):
+            response = generate_gemini_content("Explain the stored finding.")
+
+        self.assertEqual(response.text, "Recovered answer")
+        request_timeouts = [
+            call.kwargs["timeout_ms"] for call in get_client.call_args_list
+        ]
+        self.assertEqual(request_timeouts, [45000, 11000])
+        self.assertTrue(all(timeout >= 10000 for timeout in request_timeouts))
+        self.assertEqual([call.args[0] for call in sleep.call_args_list], [1])
+
+    def test_gemini_retries_http_400_deadline_errors(self):
+        from .views import generate_gemini_content
+
+        deadline_error = RuntimeError("Manually set deadline 1s is too short")
+        deadline_error.code = 400
+        client = MagicMock()
+        client.models.generate_content.side_effect = [
+            deadline_error,
+            SimpleNamespace(text="Recovered answer"),
+        ]
+        with (
+            override_settings(
+                GEMINI_MODEL="gemini-primary",
+                GEMINI_FALLBACK_MODEL="",
+            ),
+            patch("api.views.get_gemini_client", return_value=client),
+            patch("api.views.time.sleep") as sleep,
+            self.assertLogs("security.scans", level="WARNING"),
+        ):
+            response = generate_gemini_content("Explain the stored finding.")
+
+        self.assertEqual(response.text, "Recovered answer")
+        self.assertEqual(client.models.generate_content.call_count, 2)
+        self.assertEqual([call.args[0] for call in sleep.call_args_list], [1])
 
     def test_gemini_generation_retries_gateway_timeouts_then_uses_fallback(self):
         from .views import generate_gemini_content
