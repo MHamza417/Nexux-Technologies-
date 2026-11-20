@@ -257,20 +257,25 @@ pipeline {
 
         stage('Deploy Compose Stack') {
             when {
-                expression { params.PIPELINE_MODE == 'deploy' }
-                expression { false }
+                expression {
+                    params.PIPELINE_MODE == 'deploy' &&
+                    (
+                        env.BRANCH_NAME == 'main' ||
+                        env.GIT_BRANCH == 'main' ||
+                        env.GIT_BRANCH == 'origin/main' ||
+                        env.GIT_BRANCH == 'refs/remotes/origin/main'
+                    )
+                }
             }
             options {
                 timeout(time: 30, unit: 'MINUTES')
             }
             steps {
-                dir('/home/ubuntu/Nexux-Technologies-') {
+                sshagent(credentials: ['app-server-ssh']) {
                     sh '''
                         set -e
-                        git pull --ff-only origin main
-                        docker compose build backend frontend
-                        docker compose up -d --no-deps --force-recreate backend frontend
-                        docker image prune -f
+                        ssh -o StrictHostKeyChecking=accept-new ubuntu@13.63.222.33 \
+                            'cd /home/ubuntu/Nexux-Technologies- && git pull --ff-only origin main && docker compose build backend frontend && docker compose up -d --no-deps --force-recreate backend frontend && docker image prune -f'
                     '''
                 }
             }

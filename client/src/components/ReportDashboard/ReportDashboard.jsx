@@ -622,7 +622,11 @@ function ReportDashboard() {
   async function submitQuestion(event) {
     event.preventDefault();
     const trimmedQuestion = question.trim();
-    if (!trimmedQuestion || !report || asking) return;
+    if (!report || asking) return;
+    if (!trimmedQuestion) {
+      generateFixSuggestions();
+      return;
+    }
     const relevantFindings = selectedFindingEntries();
     const userMessage = { role: "user", text: trimmedQuestion };
     setMessages((previous) => [...previous, userMessage]);
@@ -658,21 +662,24 @@ function ReportDashboard() {
 
   async function generateFixSuggestions() {
     if (!report || asking) return;
+    const relevantFindings = selectedFindingEntries();
+    const findingIndex = findingSelection === "all" ? undefined : Number(findingSelection);
+    const scope = findingSelection === "all" ? "all stored findings" : "the selected finding";
     setAssistantError("");
     setAssistantNotice("");
     setAsking(true);
     try {
       const result = await askScanAssistant(
         report.scan_id,
-        "For each stored finding, explain the risk briefly and give prioritized, actionable remediation steps plus safe verification steps. Use only the supplied report, do not invent evidence or code context, and state when more code context is needed.",
-        undefined,
+        `Provide concise, actionable remediation suggestions for ${scope} only. Focus on the specific changes needed and brief safe verification steps. Do not provide a general report summary. Use only the supplied stored report and do not invent evidence or code context.`,
+        findingIndex,
         accessToken,
         "fix_suggestions",
       );
       const answer = typeof result?.answer === "string" ? result.answer.trim() : "";
       if (!answer) throw new Error("Gemini returned no readable suggestions.");
       if (result.ai_generated !== true) {
-        showScannerRemediationFallback(selectedFindingEntries("all"));
+        showScannerRemediationFallback(relevantFindings);
         document.getElementById("report-ai-chat")?.scrollIntoView({
           behavior: "smooth",
           block: "center",
@@ -691,7 +698,7 @@ function ReportDashboard() {
         block: "center",
       });
     } catch {
-      showScannerRemediationFallback(selectedFindingEntries("all"));
+      showScannerRemediationFallback(relevantFindings);
       document.getElementById("report-ai-chat")?.scrollIntoView({
         behavior: "smooth",
         block: "center",
@@ -911,7 +918,7 @@ function ReportDashboard() {
                       <dl>
                         <div><dt>Affected component</dt><dd>{finding.affected_component || "Not supplied by scanner"}</dd></div>
                         <div><dt>Evidence</dt><dd>{finding.evidence || "No evidence supplied by scanner."}</dd></div>
-                        <div><dt>Scanner remediation</dt><dd>{finding.remediation || "No remediation guidance supplied by scanner."}</dd></div>
+                        <div><dt>Scanner remediation</dt><dd>{plainReportText(finding.remediation) || "No remediation guidance supplied by scanner."}</dd></div>
                       </dl>
                       <button
                         className="report-ask-finding"
@@ -1041,15 +1048,15 @@ function ReportDashboard() {
                     id="report-ai-question"
                     value={question}
                     onChange={(event) => setQuestion(event.target.value)}
-                    placeholder="Ask how a stored finding affects your application or how to verify a fix…"
+                    placeholder="Select a finding and leave blank for suggestions, or type a question…"
                     maxLength={2000}
                     rows={3}
                   />
-                  <button type="submit" disabled={asking || !question.trim()}>
-                    {asking ? "Thinking…" : "Ask Gemini"}
+                  <button type="submit" disabled={asking}>
+                    {asking ? "Thinking…" : question.trim() ? "Ask Gemini" : "Get suggestions"}
                   </button>
                 </div>
-                <small>Questions are sent to the configured backend Gemini integration. Microphone support depends on your browser; typing always works.</small>
+                <small>Select a finding and click Get suggestions, or type a question for Gemini. Whole report applies to all findings.</small>
               </form>
             </section>
           </>
